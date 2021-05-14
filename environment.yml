@@ -1,0 +1,18 @@
+name: rtdefects
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python>=3.8
+  - tensorflow>2
+  - watchdog>=2
+  - numpy==1.19.*
+  - pandas==1.*
+  - scikit-image
+  - flask
+  - jupyterlab
+  - pytest
+  - pip
+  - pip:
+     - funcx
+     - -e .
