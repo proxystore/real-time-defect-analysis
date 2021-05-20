@@ -4,5 +4,10 @@ setup(
     name='rtdefects',
     version='0.0.1',
     packages=find_packages(),
-    description='Server for performing real-time void detection in TEM images'
+    description='Server for performing real-time void detection in TEM images',
+    entry_points={
+        'console_scripts': [
+            'rtdefects=rtdefects.cli:main'
+        ]
+    }
 )
