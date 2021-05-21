@@ -1,11 +1,11 @@
-import re
 from argparse import ArgumentParser
 from typing import Optional, List, Union
 from pathlib import Path
-from queue import Queue
+from queue import Queue, Empty
 from time import perf_counter, sleep
 import logging
 import json
+import re
 
 from funcx import FuncXClient
 from skimage.io import imread
@@ -81,6 +81,18 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
             logger.info('Created object is a directory. Skipping')
             return
 
+        # Attempt to run it
+        try:
+            self._run_command(event)
+        except BaseException as e:
+            logger.warning(f'Analysis for {event.src_path} failed. Error: {e}')
+
+    def _run_command(self, event: FileCreatedEvent):
+        """Read an image and send image processing task to FuncX
+
+        Args:
+            event: Event describing a file creation
+        """
         # Match the filename
         if self.file_regex is not None:
             file_path = Path(event.src_path)
@@ -89,7 +101,6 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
 
         # Performance information
         detect_time = perf_counter()
-        self.index += 1
 
         # Load the image from disk
         image_data = imread(event.src_path)
@@ -101,6 +112,7 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
         logger.info(f'Submitted task to FuncX. Task ID: {task_id}')
 
         # Push the task ID and submit time to the queue for processing
+        self.index += 1
         self.queue.put((task_id, detect_time, self.index))
 
 
@@ -152,7 +164,16 @@ def main(args: Optional[List[str]] = None):
     while True:
         try:
             # Wait for a task to be added the queue
-            task_id, detect_time, index = exec_queue.get(timeout=3600)
+            while True:
+                task_id = detect_time = index = None
+                try:
+                    task_id, detect_time, index = exec_queue.get(timeout=5)
+                except Empty:
+                    logger.debug('Waiting for task to complete')
+                    continue
+                else:
+                    break
+            logger.info(f'Waiting for task request {task_id} to complete')
 
             # Wait it for it finish from FuncX
             while (task := client.get_task(task_id))['pending']:
