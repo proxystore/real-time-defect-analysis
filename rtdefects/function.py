@@ -16,11 +16,17 @@ def perform_segmentation(image_data: np.ndarray) -> np.ndarray:
     """Perform the image segmentation with a tensorflow model.
 
     Args:
-        image_data: Image to be segmented, as a NumPy array
+        image_data: Images to be segmented. Should be 3 channels with values ranging between 0-1 as np.float32
     Returns:
         Image segmentation mask
     """
     global _model  # Stores a loaded model between runs
+
+    # Check the shape
+    assert image_data.ndim == 4, "Expects a stack of images"
+    assert image_data.shape[-1] == 3, "Expects 16 output channels"
+    assert image_data.dtype == np.float32, "Expects np.float32"
+    assert 0 <= np.min(image_data) and np.max(image_data) <= 1, "Image values should be in [0, 1]"
 
     # If needed, load the model
     if _model is None:

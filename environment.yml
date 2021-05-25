@@ -8,7 +8,7 @@ dependencies:
   - watchdog>=2
   - numpy==1.19.*
   - pandas==1.*
-  - scikit-image
+  - opencv>=4
   - flask
   - jupyterlab
   - pytest

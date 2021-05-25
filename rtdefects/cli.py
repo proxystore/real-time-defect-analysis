@@ -7,8 +7,9 @@ import logging
 import json
 import re
 
+import cv2
+import numpy as np
 from funcx import FuncXClient
-from skimage.io import imread
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, DirCreatedEvent
 
@@ -17,9 +18,42 @@ logger = logging.getLogger(__name__)
 _config_path = Path(__file__).parent.joinpath('config.json')
 
 
-def _funcx_func(data):
+def _funcx_func(data: bytes):
+    """Function used for FuncX deployment of inference
+
+    Inputs:
+        data: TIF image data as a bytestring
+    Returns:
+        A boolean array of the segmented regions
+    """
+    # Imports must be local to the function
     from rtdefects.function import perform_segmentation
-    return perform_segmentation(data)
+    from tempfile import NamedTemporaryFile
+    from pathlib import Path
+    import numpy as np
+    import cv2
+
+    # Load the file via disk
+    temp = NamedTemporaryFile(suffix='.tif', mode='w+b', delete=False)
+    try:
+        temp.write(data)
+        temp.close()
+
+        image = cv2.imread(temp.name)
+    finally:
+        # Delete the file once complete
+        Path(temp.name).unlink(missing_ok=True)
+
+    # Preprocess the image data
+    image = np.array(image, dtype=np.float32) / 255
+    image = np.expand_dims(image, axis=0)
+
+    # Perform the segmentation
+    segment = perform_segmentation(image)
+
+    # Make it into a bool array
+    segment = segment < 0.5
+    return segment[0]
 
 
 def _set_config(function_id: Optional[str] = None, endpoint_id: Optional[str] = None):
@@ -85,7 +119,7 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
         try:
             self._run_command(event)
         except BaseException as e:
-            logger.warning(f'Analysis for {event.src_path} failed. Error: {e}')
+            logger.warning(f'Submission for {event.src_path} failed. Error: {e}')
 
     def _run_command(self, event: FileCreatedEvent):
         """Read an image and send image processing task to FuncX
@@ -103,17 +137,18 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
         detect_time = perf_counter()
 
         # Load the image from disk
-        image_data = imread(event.src_path)
-        logger.info(f'Read a {image_data.shape[0]}x{image_data.shape[1]} image from {event.src_path}')
+        sleep(1.)
+        with open(event.src_path, 'rb') as fp:
+            image_data = fp.read()
+        logger.info(f'Read a {len(image_data) / 1024 ** 2:.1f} MB image from {event.src_path}')
 
         # Submit it to FuncX for evaluation
-        # TODO (wardlt): Shape the image to the proper size for our models
-        task_id = self.client.run(image_data[None, :128, :128, :], function_id=self.func_id, endpoint_id=self.endp_id)
+        task_id = self.client.run(image_data, function_id=self.func_id, endpoint_id=self.endp_id)
         logger.info(f'Submitted task to FuncX. Task ID: {task_id}')
 
         # Push the task ID and submit time to the queue for processing
         self.index += 1
-        self.queue.put((task_id, detect_time, self.index))
+        self.queue.put((task_id, detect_time, self.index, Path(event.src_path).name))
 
 
 def main(args: Optional[List[str]] = None):
@@ -130,6 +165,7 @@ def main(args: Optional[List[str]] = None):
 
     # Add in the launch setting
     start_parser = subparsers.add_parser('start', help='Launch the processing service')
+    start_parser.add_argument('--regex', default=r'.*.tiff?$', help='Regex to match files')
     start_parser.add_argument('watch_dir', help='Which directory to watch for new files')
 
     # Add in the register setting
@@ -155,7 +191,13 @@ def main(args: Optional[List[str]] = None):
     with open(_config_path, 'r') as fp:
         config = json.load(fp)
     exec_queue = Queue()
-    handler = FuncXSubmitEventHandler(client, config['function_id'], config['endpoint_id'], exec_queue)
+    handler = FuncXSubmitEventHandler(client, config['function_id'], config['endpoint_id'], exec_queue,
+                                      file_regex=args.regex)
+
+    # Prepare the watch directory
+    watch_dir = Path(args.watch_dir)
+    mask_dir = watch_dir.joinpath('masks')
+    mask_dir.mkdir(exist_ok=True)
 
     # Prepare the watcher
     obs = Observer()
@@ -164,10 +206,11 @@ def main(args: Optional[List[str]] = None):
     while True:
         try:
             # Wait for a task to be added the queue
+            #  Note: Queue.get is not interruptable in Windows, hence the waiting logic
             while True:
-                task_id = detect_time = index = None
+                task_id = detect_time = index = img_name = None
                 try:
-                    task_id, detect_time, index = exec_queue.get(timeout=5)
+                    task_id, detect_time, index, img_name = exec_queue.get(timeout=5)
                 except Empty:
                     logger.debug('Waiting for task to complete')
                     continue
@@ -183,7 +226,12 @@ def main(args: Optional[List[str]] = None):
                 logger.warning(f'Task failure: {task["exception"]}')
                 break
             rtt = perf_counter() - detect_time
-            logger.info(f'Result received for {index}/{handler.index}. Round-trip time: {rtt:.2f}s. Backlog: {exec_queue.qsize()}')
+            logger.info(f'Result received for {index}/{handler.index}. RTT: {rtt:.2f}s. Backlog: {exec_queue.qsize()}')
+
+            # Save the mask to disk
+            out_name = mask_dir.joinpath(img_name)
+            cv2.imwrite(str(out_name), np.array(result, dtype=np.float32))
+            logger.info(f'Wrote output file to: {out_name}')
         except KeyboardInterrupt:
             logger.info('Detected an interrupt. Stopping system')
             break
@@ -191,5 +239,7 @@ def main(args: Optional[List[str]] = None):
             obs.stop()
             logger.warning('Unexpected failure!')
             raise
+
+    # Shut down the file reader
     obs.stop()
     obs.join()
