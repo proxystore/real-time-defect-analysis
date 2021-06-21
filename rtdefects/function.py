@@ -68,7 +68,7 @@ def analyze_defects(mask: np.ndarray, min_size: int = 50) -> dict:
 
     # Assign labels to the labeled regions
     labels = measure.label(mask)
-    output['void_count'] = labels.max()
+    output['void_count'] = int(labels.max())
 
     # Compute region properties
     props = measure.regionprops(labels, mask)
