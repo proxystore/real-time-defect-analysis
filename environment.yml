@@ -9,6 +9,7 @@ dependencies:
   - numpy==1.19.*
   - pandas==1.*
   - opencv>=4
+  - scikit-image
   - flask
   - jupyterlab
   - pytest
