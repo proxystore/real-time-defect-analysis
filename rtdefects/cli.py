@@ -1,3 +1,4 @@
+from threading import Thread
 from argparse import ArgumentParser
 from typing import Optional, List, Union
 from pathlib import Path
@@ -14,6 +15,9 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, DirCreatedEvent
 
 
+from rtdefects.flask import app
+
+
 logger = logging.getLogger(__name__)
 _config_path = Path(__file__).parent.joinpath('config.json')
 
@@ -24,10 +28,11 @@ def _funcx_func(data: bytes):
     Inputs:
         data: TIF image data as a bytestring
     Returns:
-        A boolean array of the segmented regions
+        - A boolean array of the segmented regions
+        - A dictionary of image analysis results
     """
     # Imports must be local to the function
-    from rtdefects.function import perform_segmentation
+    from rtdefects.function import perform_segmentation, analyze_defects
     from tempfile import NamedTemporaryFile
     from pathlib import Path
     import numpy as np
@@ -52,8 +57,11 @@ def _funcx_func(data: bytes):
     segment = perform_segmentation(image)
 
     # Make it into a bool array
-    segment = segment < 0.5
-    return segment[0]
+    mask = segment[0, :, :, 0] > 0.9
+
+    # Generate the analysis results
+    defect_results = analyze_defects(mask)
+    return mask, defect_results
 
 
 def _set_config(function_id: Optional[str] = None, endpoint_id: Optional[str] = None):
@@ -148,7 +156,7 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
 
         # Push the task ID and submit time to the queue for processing
         self.index += 1
-        self.queue.put((task_id, detect_time, self.index, Path(event.src_path).name))
+        self.queue.put((task_id, detect_time, self.index, Path(event.src_path)))
 
 
 def main(args: Optional[List[str]] = None):
@@ -208,9 +216,9 @@ def main(args: Optional[List[str]] = None):
             # Wait for a task to be added the queue
             #  Note: Queue.get is not interruptable in Windows, hence the waiting logic
             while True:
-                task_id = detect_time = index = img_name = None
+                task_id = detect_time = index = img_path = None
                 try:
-                    task_id, detect_time, index, img_name = exec_queue.get(timeout=5)
+                    task_id, detect_time, index, img_path = exec_queue.get(timeout=5)
                 except Empty:
                     logger.debug('Waiting for task to complete')
                     continue
@@ -221,17 +229,23 @@ def main(args: Optional[List[str]] = None):
             # Wait it for it finish from FuncX
             while (task := client.get_task(task_id))['pending']:
                 sleep(1)
-            result = task.pop('result')
-            if result is None:
+            mask, defect_info = task.pop('result')
+            if mask is None:
                 logger.warning(f'Task failure: {task["exception"]}')
                 break
             rtt = perf_counter() - detect_time
             logger.info(f'Result received for {index}/{handler.index}. RTT: {rtt:.2f}s. Backlog: {exec_queue.qsize()}')
 
             # Save the mask to disk
-            out_name = mask_dir.joinpath(img_name)
-            cv2.imwrite(str(out_name), np.array(result, dtype=np.float32))
+            out_name = mask_dir.joinpath(img_path.name)
+            cv2.imwrite(str(out_name), np.array(mask, dtype=np.float32))
             logger.info(f'Wrote output file to: {out_name}')
+
+            # Write out the image defect information
+            defect_info['mask-path'] = str(out_name)
+            defect_info['image-path'] = str(img_path)
+            with mask_dir.joinpath('defect-details.json').open('a') as fp:
+                print(json.dumps(defect_info), file=fp)
         except KeyboardInterrupt:
             logger.info('Detected an interrupt. Stopping system')
             break
