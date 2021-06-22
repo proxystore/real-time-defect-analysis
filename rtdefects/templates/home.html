@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Realtime Defects</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.1/dist/css/bootstrap.min.css" rel="stylesheet"
+          integrity="sha384-+0n0xVW2eSR5OomGNYDnhzAbDsOXxcvSN1TPprVMTNDbiYZCxYbOOl7+AMvyTG2x" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.1/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-gtEjrD/SeCtmISkJkNUaaKMoLD0//ElJ19smozuHV6z3Iehds+3Ulb9Bn9Plx0x4"
+            crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/vue@next"></script>
+
+</head>
+<div class="container">
+    <body>
+    <h1>Real-time Defect Analysis</h1>
+    Web UI for defect analysis system.
+
+    <h2>System Status</h2>
+    Status of the system.
+    <div id="status">
+        <table class="table table-striped">
+            <!--- Eventually replace with a table with better formatting --->
+            <tbody>
+            <tr v-for="(item, key, index) in data">
+                <th scope="row">{{key}}</th>
+                <td>{{item}}</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <div v-if="started">
+            <h2>Results</h2>
+            <p>Visualization of the results as they are being created</p>
+
+            <h3>Mask Visualization</h3>
+            <div class="mb-3 row">
+                <div class="col">
+                    <label for="imageSelector" class="col-form-label">Image Selection</label>
+                    <input v-imgcount="data.num_evaluated" class="form-range" type="range"
+                           min="1" max="1" step="1" id="selection" v-model="img_selection" id="imageSelector"/>
+                </div>
+            </div>
+
+            <p>Displaying results for image {{img_selection}}.</p>
+
+            <table class="table" style="text-align: center;">
+                <thead>
+                <th>Original Image</th>
+                <th>Mask</th>
+                <th>Overlay</th>
+                </thead>
+                <tr>
+                    <td><img v-imgchoice="img_selection" src="/api/image/0" style="width: 75%;"></td>
+                    <td><img v-imgchoice="img_selection" src="/api/mask/0" style="width: 75%;"></td>
+                    <td><img v-imgchoice="img_selection" src="/api/mask/0" style="width: 75%;"></td>
+                </tr>
+            </table>
+        </div>
+    </div>
+
+    <script src="static/defect.js"></script>
+    </body>
+</div>
+</html>

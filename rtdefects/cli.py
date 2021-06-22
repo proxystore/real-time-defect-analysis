@@ -207,6 +207,12 @@ def main(args: Optional[List[str]] = None):
     mask_dir = watch_dir.joinpath('masks')
     mask_dir.mkdir(exist_ok=True)
 
+    # Launch the flask app
+    app.config['exec_queue'] = exec_queue
+    app.config['watch_dir'] = Path(args.watch_dir)
+    flask_thr = Thread(target=app.run, daemon=True, name='rtdefects.flask')
+    flask_thr.start()
+
     # Prepare the watcher
     obs = Observer()
     obs.schedule(handler, path=args.watch_dir, recursive=False)
@@ -242,8 +248,10 @@ def main(args: Optional[List[str]] = None):
             logger.info(f'Wrote output file to: {out_name}')
 
             # Write out the image defect information
+            defect_info['detect_time'] = detect_time
             defect_info['mask-path'] = str(out_name)
             defect_info['image-path'] = str(img_path)
+            defect_info['rtt'] = rtt
             with mask_dir.joinpath('defect-details.json').open('a') as fp:
                 print(json.dumps(defect_info), file=fp)
         except KeyboardInterrupt:
