@@ -1,13 +1,14 @@
+from typing import Optional
 from pathlib import Path
 from hashlib import md5
 import logging
 
-from skimage import data, filters, measure, morphology
+from skimage import measure, morphology
 import tensorflow as tf
 import numpy as np
 
 # Global variables for holding the model in memory
-_model: tf.keras.models.Model = None
+_model: Optional[tf.keras.models.Model] = None
 _model_path = Path(__file__).parent.joinpath('segment-model.h5')
 
 logger = logging.getLogger(__name__)

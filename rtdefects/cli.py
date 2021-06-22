@@ -8,8 +8,7 @@ import logging
 import json
 import re
 
-import cv2
-import numpy as np
+import imageio
 from funcx import FuncXClient
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, DirCreatedEvent
@@ -33,21 +32,14 @@ def _funcx_func(data: bytes):
     """
     # Imports must be local to the function
     from rtdefects.function import perform_segmentation, analyze_defects
-    from tempfile import NamedTemporaryFile
-    from pathlib import Path
+    from skimage import color
+    from io import BytesIO
     import numpy as np
-    import cv2
+    import imageio
 
     # Load the file via disk
-    temp = NamedTemporaryFile(suffix='.tif', mode='w+b', delete=False)
-    try:
-        temp.write(data)
-        temp.close()
-
-        image = cv2.imread(temp.name)
-    finally:
-        # Delete the file once complete
-        Path(temp.name).unlink(missing_ok=True)
+    image_gray = imageio.imread(BytesIO(data))
+    image = color.gray2rgb(image_gray)
 
     # Preprocess the image data
     image = np.array(image, dtype=np.float32) / 255
@@ -61,7 +53,10 @@ def _funcx_func(data: bytes):
 
     # Generate the analysis results
     defect_results = analyze_defects(mask)
-    return mask, defect_results
+
+    # Convert mask to a uint8-compatible image
+    mask_img = np.array(mask * 255, dtype=np.uint8)
+    return mask_img, defect_results
 
 
 def _set_config(function_id: Optional[str] = None, endpoint_id: Optional[str] = None):
@@ -244,7 +239,7 @@ def main(args: Optional[List[str]] = None):
 
             # Save the mask to disk
             out_name = mask_dir.joinpath(img_path.name)
-            cv2.imwrite(str(out_name), np.array(mask, dtype=np.float32))
+            imageio.imwrite(out_name, mask)
             logger.info(f'Wrote output file to: {out_name}')
 
             # Write out the image defect information

@@ -4,7 +4,9 @@ from queue import Queue
 from io import BytesIO
 
 import imageio
+import numpy as np
 import pandas as pd
+from skimage import color
 from flask import Flask, send_file
 
 _path = Path(__file__).parent
@@ -94,5 +96,40 @@ def get_mask(image: int):
     img = imageio.imread(image_path)
     img_out = BytesIO()
     imageio.imwrite(img_out, img, format='jpeg')
+    img_out.seek(0)
+    return send_file(img_out, attachment_filename=image_path.name, mimetype='image/jpeg')
+
+
+@app.route('/api/overlay/<int:image>')
+def get_overlay(image: int):
+    """Get a certain mask from the dataset
+
+    Args:
+        image: Index of the mask
+    Returns:
+        Image in JPEG format
+    """
+    # Get the image
+    rad_data = _load_data()
+    image_path = Path(rad_data.iloc[image]['image-path'])
+    base = imageio.imread(image_path)
+    mask_path = Path(rad_data.iloc[image]['mask-path'])
+    mask = imageio.imread(mask_path)
+
+    # Convert base to rgb
+    base_rgb = color.gray2rgb(base)
+
+    # Make the mask red
+    mask_rgb = color.gray2rgb(mask)
+    mask_rgb[:, :, 1:] = 0
+
+    # Compute the output
+    output = base_rgb + mask_rgb
+    output = np.array(output, dtype=np.uint8)
+    output = np.clip(0, 255, output)
+
+    # Convert it to JPEG
+    img_out = BytesIO()
+    imageio.imwrite(img_out, output, format='jpeg')
     img_out.seek(0)
     return send_file(img_out, attachment_filename=image_path.name, mimetype='image/jpeg')
