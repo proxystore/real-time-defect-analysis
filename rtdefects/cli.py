@@ -141,7 +141,7 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
                 logger.info(f'Filename "{file_path}" did not match regex. Skipping')
 
         # Performance information
-        detect_time = perf_counter()
+        detect_time = datetime.now
 
         # Load the image from disk
         sleep(1.)

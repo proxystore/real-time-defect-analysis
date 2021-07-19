@@ -2,16 +2,22 @@
 from pathlib import Path
 from queue import Queue
 from io import BytesIO
+import json
 
 import imageio
 import numpy as np
 import pandas as pd
+from bokeh.embed import json_item
+from bokeh.plotting import figure
+from bokeh.models import AjaxDataSource
 from skimage import color
 from flask import Flask, send_file
+from flask_cors import CORS
 
 _path = Path(__file__).parent
 app = Flask('rtdefects', template_folder=str(_path / "templates"),
             static_folder=str(_path / "static"))
+CORS(app)
 
 
 def _load_data() -> pd.DataFrame:
@@ -19,7 +25,9 @@ def _load_data() -> pd.DataFrame:
     data_path = app.config['watch_dir'] / "masks" / "defect-details.json"
     if not data_path.is_file():
         return pd.DataFrame()
-    return pd.read_json(data_path, lines=True)
+    data = pd.read_json(data_path, lines=True)
+    data['detect_time'] -= data['detect_time'].min()
+    return data
 
 
 @app.route('/')
@@ -27,16 +35,28 @@ def home():
     return send_file(_path / "templates" / "home.html")
 
 
-@app.route('/latest-img.tif')
-def latest_img():
-    rad_data = _load_data()
-    return send_file('test')
+@app.route('/bokeh')
+def full_plot():
+    # Set up to connect with self to get data
+    source = AjaxDataSource(data_url='http://localhost:5000/api/data',
+                            polling_interval=5000)
+
+    # Make
+    fig = figure(height=400, sizing_mode='stretch_width')
+
+    # Make a simple plot
+    fig.line('detect_time', 'void_frac', source=source)
+
+    fig.xaxis.axis_label = 'Time (s)'
+    fig.yaxis.axis_label = 'Void Fraction'
+
+    return json.dumps(json_item(fig, "plot"))
 
 
-@app.route('/api/data')
-def data():
+@app.route('/api/data', methods=('GET', 'POST'))
+def get_data():
     rad_data = _load_data()
-    return rad_data.to_json(orient='records')
+    return rad_data.to_dict(orient='list')
 
 
 @app.route('/api/status')

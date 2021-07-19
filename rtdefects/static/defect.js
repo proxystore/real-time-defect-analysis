@@ -31,6 +31,9 @@ const StatBox = {
   },
   mounted() {
     updateStatus(this)
+    fetch('/bokeh')
+        .then(function(response) { return response.json() })
+        .then(function(item) { return Bokeh.embed.embed_item(item) })
     setInterval(() => {updateStatus(this)}, 5000)
   }
 }
@@ -41,8 +44,7 @@ const app = Vue.createApp(StatBox)
 // Add a function to expand the range slider with time
 app.directive('imgcount', (el, binding) => {
     el.max = binding.value
-  }
-)
+})
 app.directive('imgchoice', (el, binding) => {
     const path = el.src.split("/")
     path[path.length - 1] = binding.value - 1  // Images are zero-indexed

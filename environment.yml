@@ -4,13 +4,15 @@ channels:
   - conda-forge
 dependencies:
   - python>=3.8
-  - tensorflow>2
+  - tensorflow-gpu>2
   - watchdog>=2
   - numpy==1.19.*
   - pandas==1.*
   - scikit-image
   - imageio-ffmpeg
+  - bokeh
   - flask
+  - flask-cors
   - jupyterlab
   - pytest
   - pip

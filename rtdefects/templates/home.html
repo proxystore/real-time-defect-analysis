@@ -9,6 +9,11 @@
             integrity="sha384-gtEjrD/SeCtmISkJkNUaaKMoLD0//ElJ19smozuHV6z3Iehds+3Ulb9Bn9Plx0x4"
             crossorigin="anonymous"></script>
     <script src="https://unpkg.com/vue@next"></script>
+    <script src="https://cdn.bokeh.org/bokeh/release/bokeh-2.3.3.min.js"></script>
+    <script src="https://cdn.bokeh.org/bokeh/release/bokeh-widgets-2.3.3.min.js"
+            crossorigin="anonymous"></script>
+    <script src="https://cdn.bokeh.org/bokeh/release/bokeh-tables-2.3.3.min.js"
+            crossorigin="anonymous"></script>
 
 </head>
 <div class="container">
@@ -29,10 +34,10 @@
             </tbody>
         </table>
 
-        <div v-if="started">
-            <h2>Results</h2>
-            <p>Visualization of the results as they are being created</p>
+        <h2>Results</h2>
+        <p>Visualization of the results as they are being created</p>
 
+        <div v-if="started">
             <h3>Mask Visualization</h3>
             <div class="mb-3 row">
                 <div class="col">
@@ -57,9 +62,19 @@
                 </tr>
             </table>
         </div>
+
+        <h3>Plots</h3>
+
+        Illustration fo the defect growth as a function of detection time.
+        <div id="plot"></div>
+
     </div>
 
     <script src="static/defect.js"></script>
+    <script>
+
+
+    </script>
     </body>
 </div>
 </html>
