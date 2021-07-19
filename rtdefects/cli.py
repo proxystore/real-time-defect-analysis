@@ -27,7 +27,7 @@ def _funcx_func(data: bytes):
     Inputs:
         data: TIF image data as a bytestring
     Returns:
-        - A boolean array of the segmented regions
+        - Bytes from a TIFF-encoded image of the mask
         - A dictionary of image analysis results
     """
     # Imports must be local to the function
@@ -56,7 +56,11 @@ def _funcx_func(data: bytes):
 
     # Convert mask to a uint8-compatible image
     mask_img = np.array(mask * 255, dtype=np.uint8)
-    return mask_img, defect_results
+
+    # Convert mask to a TIFF-encoded image
+    output_img = BytesIO()
+    imageio.imwrite(output_img, mask_img, format='tiff')
+    return output_img.getvalue(), defect_results
 
 
 def _set_config(function_id: Optional[str] = None, endpoint_id: Optional[str] = None):
@@ -141,7 +145,7 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
                 logger.info(f'Filename "{file_path}" did not match regex. Skipping')
 
         # Performance information
-        detect_time = datetime.now
+        detect_time = perf_counter()
 
         # Load the image from disk
         sleep(1.)
@@ -234,7 +238,7 @@ def main(args: Optional[List[str]] = None):
             # Wait it for it finish from FuncX
             while (task := client.get_task(task_id))['pending']:
                 sleep(1)
-            mask, defect_info = task.pop('result')
+            mask, defect_info = client.get_result(task_id)
             if mask is None:
                 logger.warning(f'Task failure: {task["exception"]}')
                 break
@@ -243,7 +247,8 @@ def main(args: Optional[List[str]] = None):
 
             # Save the mask to disk
             out_name = mask_dir.joinpath(img_path.name)
-            imageio.imwrite(out_name, mask)
+            with out_name.open('wb') as fp:
+                fp.write(mask)
             logger.info(f'Wrote output file to: {out_name}')
 
             # Write out the image defect information
