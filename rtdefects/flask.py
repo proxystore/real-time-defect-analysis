@@ -117,16 +117,16 @@ def get_overlay(image: int):
     mask = imageio.imread(mask_path)
 
     # Convert base to rgb
-    base_rgb = color.gray2rgb(base)
+    base_rgb = np.array(color.gray2rgb(base), dtype=np.float)
 
     # Make the mask red
-    mask_rgb = color.gray2rgb(mask)
+    mask_rgb = np.array(color.gray2rgb(mask), dtype=np.float)
     mask_rgb[:, :, 1:] = 0
 
     # Compute the output
     output = base_rgb + mask_rgb
+    output = np.clip(output, 0, 255)
     output = np.array(output, dtype=np.uint8)
-    output = np.clip(0, 255, output)
 
     # Convert it to JPEG
     img_out = BytesIO()
