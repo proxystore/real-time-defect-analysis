@@ -77,6 +77,10 @@ def _set_config(function_id: Optional[str] = None, endpoint_id: Optional[str] = 
     if endpoint_id is not None:
         config['endpoint_id'] = endpoint_id
 
+    # Print out the configuration settings
+    for key, value in config.items():
+        logger.info(f'New setting for {key}: {value}')
+
     # Save it
     with open(_config_path, 'w') as fp:
         json.dump(config, fp, indent=2)
