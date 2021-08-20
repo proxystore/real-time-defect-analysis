@@ -4,7 +4,7 @@ channels:
   - conda-forge
 dependencies:
   - python>=3.8
-  - tensorflow-gpu>2
+  - tensorflow>2
   - watchdog>=2
   - numpy==1.19.*
   - pandas==1.*
