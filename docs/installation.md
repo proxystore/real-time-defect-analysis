@@ -69,9 +69,13 @@ You can monoitor the progress of the software using this webpage and by followin
 Test the system by copying the [test-image.tif](https://github.com/globus-labs/real-time-defect-analysis/blob/main/tests/test-image.tif) file provided with the software into your watch folder. A few things will then happen that you can watch in the logs.
 
 1. *Reading the image from disk.* Make sure your system found the correct file
-```2021-08-31 14:45:17,452 - rtdefects.cli - INFO - Read a 1.0 MB image from doc-test/test-image.tif```
+```
+2021-08-31 14:45:17,452 - rtdefects.cli - INFO - Read a 1.0 MB image from doc-test/test-image.tif
+```
 2. *Submitting the processing request to FuncX*. The image will be uploaded to the FuncX web service along with instructions to run the image analysis at ALCF.
-```2021-08-31 14:45:22,772 - rtdefects.cli - INFO - Submitted task to FuncX. Task ID: 8f4251a9-9709-4c71-89f5-f8e30589d4d3```
+```
+2021-08-31 14:45:22,772 - rtdefects.cli - INFO - Submitted task to FuncX. Task ID: 8f4251a9-9709-4c71-89f5-f8e30589d4d3
+```
 3. *Running the task at ALCF*. `rtdefects` will then wait for the image processing to complete at ALCF. The first inference request will take a few minutes for nodes to be requested and prepared to run our code. If all goes well you will see the system report waiting for a task then reporting a successful completion:
 ```
 2021-08-31 14:45:22,772 - rtdefects.cli - INFO - Waiting for task request 8f4251a9-9709-4c71-89f5-f8e30589d4d3 to complete
