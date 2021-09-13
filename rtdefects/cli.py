@@ -8,7 +8,6 @@ import logging
 import json
 import re
 
-import imageio
 from funcx import FuncXClient
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, DirCreatedEvent
@@ -96,7 +95,9 @@ def _register_function():
 
     client = FuncXClient()
 
-    function_id = client.register_function(_funcx_func)
+    # Get the Group UUID
+    config = json.loads(_config_path.read_text())
+    function_id = client.register_function(_funcx_func, group=config['group_uuid'])
     _set_config(function_id=function_id)
 
 
