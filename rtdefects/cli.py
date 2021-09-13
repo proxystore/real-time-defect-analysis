@@ -139,20 +139,31 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
         Args:
             event: Event describing a file creation
         """
-        # Match the filename
-        if self.file_regex is not None:
-            file_path = Path(event.src_path)
-            if self.file_regex.match(file_path.name) is None:
-                logger.info(f'Filename "{file_path}" did not match regex. Skipping')
+        # Wait for write to finish
+        sleep(1.)  # TODO (wardlt): Implement a more intelligent way to check for write finish
 
+        # Send the file to be analyzed
+        file_path = Path(event.src_path)
+        self.submit_file(file_path)
+
+    def submit_file(self, file_path: Path):
+        """Submit a file to be analyzed
+
+        Args:
+            file_path: Path to the file to be analyzed
+        """
         # Performance information
         detect_time = perf_counter()
 
+        # Match the filename
+        if self.file_regex is not None:
+            if self.file_regex.match(file_path.name.lower()) is None:
+                logger.info(f'Filename "{file_path}" did not match regex. Skipping')
+
         # Load the image from disk
-        sleep(1.)
-        with open(event.src_path, 'rb') as fp:
+        with open(file_path, 'rb') as fp:
             image_data = fp.read()
-        logger.info(f'Read a {len(image_data) / 1024 ** 2:.1f} MB image from {event.src_path}')
+        logger.info(f'Read a {len(image_data) / 1024 ** 2:.1f} MB image from {file_path}')
 
         # Submit it to FuncX for evaluation
         task_id = self.client.run(image_data, function_id=self.func_id, endpoint_id=self.endp_id)
@@ -160,7 +171,7 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
 
         # Push the task ID and submit time to the queue for processing
         self.index += 1
-        self.queue.put((task_id, detect_time, self.index, Path(event.src_path)))
+        self.queue.put((task_id, detect_time, self.index, Path(file_path)))
 
 
 def main(args: Optional[List[str]] = None):
@@ -178,6 +189,7 @@ def main(args: Optional[List[str]] = None):
     # Add in the launch setting
     start_parser = subparsers.add_parser('start', help='Launch the processing service')
     start_parser.add_argument('--regex', default=r'.*.tiff?$', help='Regex to match files')
+    start_parser.add_argument('--redo-existing', action='store_true', help='Submit any existing files in the directory')
     start_parser.add_argument('watch_dir', help='Which directory to watch for new files')
 
     # Add in the register setting
@@ -217,10 +229,20 @@ def main(args: Optional[List[str]] = None):
     flask_thr = Thread(target=app.run, daemon=True, name='rtdefects.flask')
     flask_thr.start()
 
-    # Prepare the watcher
+    # Launch the watcher
     obs = Observer()
     obs.schedule(handler, path=args.watch_dir, recursive=False)
     obs.start()
+
+    # If desired, submit the existing files
+    data_path = mask_dir.joinpath('defect-details.json')
+    if args.redo_existing:
+        data_path.unlink(missing_ok=True)  # Delete any existing data
+        for file in watch_dir.iterdir():
+            if file.is_file():
+                handler.submit_file(file)
+
+    # Wait for results to complete
     while True:
         try:
             # Wait for a task to be added the queue
@@ -257,7 +279,7 @@ def main(args: Optional[List[str]] = None):
             defect_info['mask-path'] = str(out_name)
             defect_info['image-path'] = str(img_path)
             defect_info['rtt'] = rtt
-            with mask_dir.joinpath('defect-details.json').open('a') as fp:
+            with data_path.open('a') as fp:
                 print(json.dumps(defect_info), file=fp)
         except KeyboardInterrupt:
             logger.info('Detected an interrupt. Stopping system')
