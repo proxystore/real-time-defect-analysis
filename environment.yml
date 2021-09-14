@@ -19,5 +19,6 @@ dependencies:
   - pip
   - pip:
      - funcx
+     - ratelimit
      - funcx-endpoint
      - -e .

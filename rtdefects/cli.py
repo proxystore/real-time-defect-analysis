@@ -9,6 +9,7 @@ import json
 import re
 
 from funcx import FuncXClient
+from ratelimit import sleep_and_retry, rate_limited
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, DirCreatedEvent
 
@@ -55,11 +56,8 @@ def _funcx_func(data: bytes):
     # Generate the analysis results
     defect_results = analyze_defects(mask)
 
-    # Convert mask to a uint8-compatible image
-    mask_img = np.array(mask * 255, dtype=np.uint8)
-
     # Convert mask to a TIFF-encoded image
-    message = encode_as_tiff(mask_img)
+    message = encode_as_tiff(mask)
     return message, defect_results
 
 
@@ -242,6 +240,12 @@ def main(args: Optional[List[str]] = None):
             if file.is_file():
                 handler.submit_file(file)
 
+    # Set up a throttling for the
+    @sleep_and_retry
+    @rate_limited(client.max_requests, period=client.period * 0.9)  # 90% to not get too close to the limit
+    def throttled_call(task_id):
+        return client.get_task(task_id)
+
     # Wait for results to complete
     while True:
         try:
@@ -259,7 +263,7 @@ def main(args: Optional[List[str]] = None):
             logger.info(f'Waiting for task request {task_id} to complete')
 
             # Wait it for it finish from FuncX
-            while (task := client.get_task(task_id))['pending']:
+            while (task := throttled_call(task_id))['pending']:
                 sleep(1)
             mask, defect_info = client.get_result(task_id)
             if mask is None:
