@@ -10,6 +10,7 @@ dependencies:
   - pandas==1.*
   - scikit-image
   - imageio-ffmpeg
+  - hyperspy-base
   - bokeh
   - flask
   - flask-cors

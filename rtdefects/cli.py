@@ -14,6 +14,7 @@ from watchdog.events import FileSystemEventHandler, FileCreatedEvent, DirCreated
 
 
 from rtdefects.flask import app
+from rtdefects.io import read_then_encode
 
 
 logger = logging.getLogger(__name__)
@@ -24,13 +25,14 @@ def _funcx_func(data: bytes):
     """Function used for FuncX deployment of inference
 
     Inputs:
-        data: TIF image data as a bytestring
+        data: TIF image data as a bytestring. Should be an 8-bit grayscale image
     Returns:
         - Bytes from a TIFF-encoded image of the mask
         - A dictionary of image analysis results
     """
     # Imports must be local to the function
     from rtdefects.function import perform_segmentation, analyze_defects
+    from rtdefects.io import encode_as_tiff
     from skimage import color
     from io import BytesIO
     import numpy as np
@@ -57,9 +59,8 @@ def _funcx_func(data: bytes):
     mask_img = np.array(mask * 255, dtype=np.uint8)
 
     # Convert mask to a TIFF-encoded image
-    output_img = BytesIO()
-    imageio.imwrite(output_img, mask_img, format='tiff')
-    return output_img.getvalue(), defect_results
+    message = encode_as_tiff(mask_img)
+    return message, defect_results
 
 
 def _set_config(function_id: Optional[str] = None, endpoint_id: Optional[str] = None):
@@ -161,8 +162,7 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
                 logger.info(f'Filename "{file_path}" did not match regex. Skipping')
 
         # Load the image from disk
-        with open(file_path, 'rb') as fp:
-            image_data = fp.read()
+        image_data = read_then_encode(file_path)
         logger.info(f'Read a {len(image_data) / 1024 ** 2:.1f} MB image from {file_path}')
 
         # Submit it to FuncX for evaluation
