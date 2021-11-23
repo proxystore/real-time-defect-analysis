@@ -1,6 +1,8 @@
+from abc import ABCMeta, abstractmethod
+from datetime import datetime
 from threading import Thread
 from argparse import ArgumentParser
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Iterator, Tuple
 from pathlib import Path
 from queue import Queue, Empty
 from time import perf_counter, sleep
@@ -13,10 +15,8 @@ from ratelimit import sleep_and_retry, rate_limited
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, DirCreatedEvent
 
-
 from rtdefects.flask import app
 from rtdefects.io import read_then_encode
-
 
 logger = logging.getLogger(__name__)
 _config_path = Path(__file__).parent.joinpath('config.json')
@@ -100,25 +100,47 @@ def _register_function():
     _set_config(function_id=function_id)
 
 
-class FuncXSubmitEventHandler(FileSystemEventHandler):
-    """Submit a image processing task to FuncX when an image file is created"""
+class ImageProcessEventHandler(FileSystemEventHandler, metaclass=ABCMeta):
+    """Base class for providers which perform image analysis asynchronously.
 
-    def __init__(self, client: FuncXClient, func_id: str, endp_id: str, queue: Queue, file_regex: Optional[str] = None):
+    Implementations must provide two methods:
+        `submit_file` which reads the file and sends it to self._queue to be executed
+        `iterate_results` which iterates over completed inference records, removing objects from queue when completed
+    """
+
+    def __init__(self, file_regex: Optional[str] = None):
         """
         Args:
-             client: FuncX client
-             func_id: ID of the image processing function
-             endp_id: Endpoint ID for execution
-             queue: Queue to push results to
              file_regex: Regex string to match file formats
         """
-        super().__init__()
-        self.client = client
-        self.func_id = func_id
-        self.endp_id = endp_id
-        self.queue = queue
+        self._queue = Queue()
         self.index = 0
         self.file_regex = re.compile(file_regex) if file_regex is not None else None
+
+    @property
+    def queue(self):
+        """Queue used to store in-progress results"""
+        return self._queue
+
+    @abstractmethod
+    def submit_file(self, file_path):
+        """Submit a file to be analyzed
+
+        Args:
+            file_path: Path to the file to be analyzed
+        """
+        pass
+
+    @abstractmethod
+    def iterate_results(self) -> Iterator[Tuple[Path, bytes, dict, float]]:
+        """Iterate over results from process images
+
+        Yields:
+            - Path to the original image
+            - Segmented image as a byte string
+            - Information about the detected defects
+            - Time between file detection and result received, seconds
+        """
 
     def on_created(self, event: Union[FileCreatedEvent, DirCreatedEvent]):
         # Ignore directories
@@ -126,24 +148,40 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
             logger.info('Created object is a directory. Skipping')
             return
 
-        # Attempt to run it
-        try:
-            self._run_command(event)
-        except BaseException as e:
-            logger.warning(f'Submission for {event.src_path} failed. Error: {e}')
-
-    def _run_command(self, event: FileCreatedEvent):
-        """Read an image and send image processing task to FuncX
-
-        Args:
-            event: Event describing a file creation
-        """
-        # Wait for write to finish
-        sleep(1.)  # TODO (wardlt): Implement a more intelligent way to check for write finish
-
         # Send the file to be analyzed
         file_path = Path(event.src_path)
         self.submit_file(file_path)
+
+        # Match the filename
+        if self.file_regex is not None:
+            if self.file_regex.match(file_path.name.lower()) is None:
+                logger.info(f'Filename "{file_path}" did not match regex. Skipping')
+
+        # Wait for write to finish
+        sleep(1.)  # TODO (wardlt): Implement a more intelligent way to check for write finish
+
+        # Attempt to run it
+        try:
+            self.submit_file(file_path)
+        except BaseException as e:
+            logger.warning(f'Submission for {event.src_path} failed. Error: {e}')
+
+
+class FuncXSubmitEventHandler(ImageProcessEventHandler):
+    """Submit a image processing task to FuncX when an image file is created"""
+
+    def __init__(self, client: FuncXClient, func_id: str, endp_id: str, file_regex: Optional[str] = None):
+        """
+        Args:
+             client: FuncX client
+             func_id: ID of the image processing function
+             endp_id: Endpoint ID for execution
+             file_regex: Regex string to match file formats
+        """
+        super().__init__(file_regex)
+        self.client = client
+        self.func_id = func_id
+        self.endp_id = endp_id
 
     def submit_file(self, file_path: Path):
         """Submit a file to be analyzed
@@ -153,11 +191,6 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
         """
         # Performance information
         detect_time = perf_counter()
-
-        # Match the filename
-        if self.file_regex is not None:
-            if self.file_regex.match(file_path.name.lower()) is None:
-                logger.info(f'Filename "{file_path}" did not match regex. Skipping')
 
         # Load the image from disk
         image_data = read_then_encode(file_path)
@@ -170,6 +203,27 @@ class FuncXSubmitEventHandler(FileSystemEventHandler):
         # Push the task ID and submit time to the queue for processing
         self.index += 1
         self.queue.put((task_id, detect_time, self.index, Path(file_path)))
+
+    def iterate_results(self) -> Iterator[Tuple[Path, bytes, dict, float]]:
+        # Set up a throttling for the FuncX request
+        @sleep_and_retry
+        @rate_limited(self.client.max_requests - 10, period=self.client.period * 0.9)
+        def throttled_call(task_id):
+            return self.client.get_task(task_id)
+
+        for task_id, detect_time, index, img_path in iter(self.queue.get, None):
+            logger.info(f'Waiting for task request {task_id} to complete')
+
+            # Wait it for it finish from FuncX
+            while (task := throttled_call(task_id))['pending']:
+                continue
+            mask, defect_info = self.client.get_result(task_id)
+            if mask is None:
+                logger.warning(f'Task failure: {task["exception"]}')
+                break
+            rtt = perf_counter() - detect_time
+
+            yield img_path, mask, defect_info, rtt
 
 
 def main(args: Optional[List[str]] = None):
@@ -212,9 +266,7 @@ def main(args: Optional[List[str]] = None):
     client.max_request_size = 50 * 1024 ** 2
     with open(_config_path, 'r') as fp:
         config = json.load(fp)
-    exec_queue = Queue()
-    handler = FuncXSubmitEventHandler(client, config['function_id'], config['endpoint_id'], exec_queue,
-                                      file_regex=args.regex)
+    handler = FuncXSubmitEventHandler(client, config['function_id'], config['endpoint_id'], file_regex=args.regex)
 
     # Prepare the watch directory
     watch_dir = Path(args.watch_dir)
@@ -222,7 +274,7 @@ def main(args: Optional[List[str]] = None):
     mask_dir.mkdir(exist_ok=True)
 
     # Launch the flask app
-    app.config['exec_queue'] = exec_queue
+    app.config['exec_queue'] = handler.queue
     app.config['watch_dir'] = Path(args.watch_dir)
     flask_thr = Thread(target=app.run, daemon=True, name='rtdefects.flask')
     flask_thr.start()
@@ -240,37 +292,12 @@ def main(args: Optional[List[str]] = None):
             if file.is_file():
                 handler.submit_file(file)
 
-    # Set up a throttling for the
-    @sleep_and_retry
-    @rate_limited(client.max_requests, period=client.period * 0.9)  # 90% to not get too close to the limit
-    def throttled_call(task_id):
-        return client.get_task(task_id)
-
     # Wait for results to complete
-    while True:
-        try:
-            # Wait for a task to be added the queue
-            #  Note: Queue.get is not interruptable in Windows, hence the waiting logic
-            while True:
-                task_id = detect_time = index = img_path = None
-                try:
-                    task_id, detect_time, index, img_path = exec_queue.get(timeout=5)
-                except Empty:
-                    logger.debug('Waiting for task to complete')
-                    continue
-                else:
-                    break
-            logger.info(f'Waiting for task request {task_id} to complete')
-
-            # Wait it for it finish from FuncX
-            while (task := throttled_call(task_id))['pending']:
-                sleep(1)
-            mask, defect_info = client.get_result(task_id)
-            if mask is None:
-                logger.warning(f'Task failure: {task["exception"]}')
-                break
-            rtt = perf_counter() - detect_time
-            logger.info(f'Result received for {index}/{handler.index}. RTT: {rtt:.2f}s. Backlog: {exec_queue.qsize()}')
+    try:
+        for index, (img_path, mask, defect_info, rtt) in enumerate(handler.iterate_results()):
+            # Report the completed result
+            logger.info(f'Result received for {index + 1}/{handler.index}. RTT: {rtt:.2f}s.'
+                        f' Backlog: {handler.queue.qsize()}')
 
             # Save the mask to disk
             out_name = mask_dir.joinpath(img_path.name)
@@ -279,19 +306,19 @@ def main(args: Optional[List[str]] = None):
             logger.info(f'Wrote output file to: {out_name}')
 
             # Write out the image defect information
-            defect_info['detect_time'] = detect_time
+            defect_info['created_time'] = datetime.fromtimestamp(img_path.stat().st_mtime).isoformat()
+            defect_info['completed_time'] = datetime.now().isoformat()
             defect_info['mask-path'] = str(out_name)
             defect_info['image-path'] = str(img_path)
             defect_info['rtt'] = rtt
             with data_path.open('a') as fp:
                 print(json.dumps(defect_info), file=fp)
-        except KeyboardInterrupt:
-            logger.info('Detected an interrupt. Stopping system')
-            break
-        except BaseException:
-            obs.stop()
-            logger.warning('Unexpected failure!')
-            raise
+    except KeyboardInterrupt:
+        logger.info('Detected an interrupt. Stopping system')
+    except BaseException:
+        obs.stop()
+        logger.warning('Unexpected failure!')
+        raise
 
     # Shut down the file reader
     obs.stop()
