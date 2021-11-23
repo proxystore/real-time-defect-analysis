@@ -36,8 +36,12 @@ def _funcx_func(data: bytes):
     from rtdefects.io import encode_as_tiff
     from skimage import color
     from io import BytesIO
+    from time import perf_counter
     import numpy as np
     import imageio
+
+    # Measure when we start
+    start_time = perf_counter()
 
     # Load the file via disk
     image_gray = imageio.imread(BytesIO(data))
@@ -58,6 +62,9 @@ def _funcx_func(data: bytes):
 
     # Convert mask to a TIFF-encoded image
     message = encode_as_tiff(mask)
+
+    # Add the execution time to the defect results
+    defect_results['run_time'] = perf_counter() - start_time
     return message, defect_results
 
 
@@ -104,7 +111,8 @@ class ImageProcessEventHandler(FileSystemEventHandler, metaclass=ABCMeta):
     """Base class for providers which perform image analysis asynchronously.
 
     Implementations must provide two methods:
-        `submit_file` which reads the file and sends it to self._queue to be executed
+        `submit_file` which reads the file and sends it to self._queue to be executed, updates self.index
+            to indicate a file was submitted for execution
         `iterate_results` which iterates over completed inference records, removing objects from queue when completed
     """
 
@@ -202,7 +210,7 @@ class FuncXSubmitEventHandler(ImageProcessEventHandler):
 
         # Push the task ID and submit time to the queue for processing
         self.index += 1
-        self.queue.put((task_id, detect_time, self.index, Path(file_path)))
+        self.queue.put((task_id, detect_time, Path(file_path)))
 
     def iterate_results(self) -> Iterator[Tuple[Path, bytes, dict, float]]:
         # Set up a throttling for the FuncX request
@@ -211,7 +219,7 @@ class FuncXSubmitEventHandler(ImageProcessEventHandler):
         def throttled_call(task_id):
             return self.client.get_task(task_id)
 
-        for task_id, detect_time, index, img_path in iter(self.queue.get, None):
+        for task_id, detect_time, img_path in iter(self.queue.get, None):
             logger.info(f'Waiting for task request {task_id} to complete')
 
             # Wait it for it finish from FuncX
@@ -221,6 +229,29 @@ class FuncXSubmitEventHandler(ImageProcessEventHandler):
             if mask is None:
                 logger.warning(f'Task failure: {task["exception"]}')
                 break
+            rtt = perf_counter() - detect_time
+
+            yield img_path, mask, defect_info, rtt
+
+
+class LocalProcessingHandler(ImageProcessEventHandler):
+    """Image handler that performs image analysis locally"""
+
+    def submit_file(self, file_path):
+        detect_time = perf_counter()
+
+        # Push the task ID and submit time to the queue for processing
+        self.index += 1
+        self.queue.put((detect_time, Path(file_path)))
+
+    def iterate_results(self) -> Iterator[Tuple[Path, bytes, dict, float]]:
+        for detect_time, img_path in iter(self.queue.get, None):
+            # Load the image from disk
+            image_data = read_then_encode(img_path)
+            logger.info(f'Read a {len(image_data) / 1024 ** 2:.1f} MB image from {img_path}')
+
+            # Run the function
+            mask, defect_info = _funcx_func(image_data)
             rtt = perf_counter() - detect_time
 
             yield img_path, mask, defect_info, rtt
@@ -242,6 +273,8 @@ def main(args: Optional[List[str]] = None):
     start_parser = subparsers.add_parser('start', help='Launch the processing service')
     start_parser.add_argument('--regex', default=r'.*.tiff?$', help='Regex to match files')
     start_parser.add_argument('--redo-existing', action='store_true', help='Submit any existing files in the directory')
+    start_parser.add_argument('--local', action='store_true', help='Perform image analysis locally,'
+                                                                   ' instead of via FuncX')
     start_parser.add_argument('watch_dir', help='Which directory to watch for new files')
 
     # Add in the register setting
@@ -262,11 +295,14 @@ def main(args: Optional[List[str]] = None):
     assert args.command == 'start', f'Internal Error: The command "{args.command}" is not yet supported. Contact Logan'
 
     # Prepare the event handler
-    client = FuncXClient()
-    client.max_request_size = 50 * 1024 ** 2
-    with open(_config_path, 'r') as fp:
-        config = json.load(fp)
-    handler = FuncXSubmitEventHandler(client, config['function_id'], config['endpoint_id'], file_regex=args.regex)
+    if args.local:
+        handler = LocalProcessingHandler(file_regex=args.regex)
+    else:
+        client = FuncXClient()
+        client.max_request_size = 50 * 1024 ** 2
+        with open(_config_path, 'r') as fp:
+            config = json.load(fp)
+        handler = FuncXSubmitEventHandler(client, config['function_id'], config['endpoint_id'], file_regex=args.regex)
 
     # Prepare the watch directory
     watch_dir = Path(args.watch_dir)
