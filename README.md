@@ -56,6 +56,12 @@ to be processed via FuncX, and then collect the completed results.
 It will run until you exit by pressing <kbd>Ctrl</kbd>+<kbd>C</kbd>,
 which will require up to 15s to register on a Windows system.
 
+### Running without FuncX
+
+The Image Analyzer can be run without FuncX by adding the `--local` option when calling `rtdefects start`.
+It will execute the segmentation and post-processing on your local system, 
+which means you can skip setting up a compute provider.
+
 ## Support
 
 This material is based upon work supported by Laboratory Directed Research and Development (LDRD) funding from Argonne National Laboratory, provided by the Director, Office of Science, of the U.S. Department of Energy under Contract No. DE-AC02-06CH11357.
