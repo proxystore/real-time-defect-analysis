@@ -17,6 +17,8 @@ parser.add_argument('--time-between-frames', '-t', default=15, help='Minimum tim
 parser.add_argument('--output-directory', '-o', default='frames', help='Directory in which to output frames')
 parser.add_argument('--output-resolution', '-r', default=1024, help='Resolution of the output folder', type=int)
 parser.add_argument('--maximum-frames', '-m', default=None, help='Maximum number of frames to write out', type=int)
+parser.add_argument('--skip-frames', '-s', default=0, help='How many frames to skip between saving image files',
+                    type=float)
 parser.add_argument('video_file', help='Video file to unpack')
 
 args = parser.parse_args()
@@ -33,6 +35,9 @@ out_dir.mkdir(exist_ok=True)
 
 # Write frames out at specified resolutions
 for i, frame in zip(range(to_write), reader.iter_data()):
+    if i % (args.skip_frames + 1) != 0:
+        continue
+
     # Convert to grayscale and resize
     gray_image = rgb2gray(frame)
     resized_image = resize(gray_image, output_shape=(args.output_resolution,) * 2)

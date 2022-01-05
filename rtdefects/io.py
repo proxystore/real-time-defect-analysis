@@ -40,13 +40,13 @@ def load_file(path: Path) -> np.ndarray:
     data = np.array(data, dtype=np.float32)
     data = np.squeeze(data)
     if data.ndim == 3:
-        data = color.gray2rgb(data)
+        data = color.rgb2grey(data)
     data = (data - data.min()) / (data.max() - data.min())
     return data
 
 
 def encode_as_tiff(data: np.ndarray, compress_level: int = 9) -> bytes:
-    """Encode an image as a 8-bit grayscale TIFF, our desired file format
+    """Encode an image as an 8-bit grayscale TIFF, our desired file format
 
     Args:
         data: Data to be encoded, should be a float array with range 0-1

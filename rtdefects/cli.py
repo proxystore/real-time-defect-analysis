@@ -4,7 +4,7 @@ from threading import Thread
 from argparse import ArgumentParser
 from typing import Optional, List, Union, Iterator, Tuple
 from pathlib import Path
-from queue import Queue, Empty
+from queue import Queue
 from time import perf_counter, sleep
 import logging
 import json
@@ -17,42 +17,41 @@ from watchdog.events import FileSystemEventHandler, FileCreatedEvent, DirCreated
 
 from rtdefects.flask import app
 from rtdefects.io import read_then_encode
+from rtdefects.segmentation import BaseSegmenter
+from rtdefects.segmentation.tf import TFSegmenter
 
 logger = logging.getLogger(__name__)
 _config_path = Path(__file__).parent.joinpath('config.json')
 
 
-def _funcx_func(data: bytes):
+def _funcx_func(segmenter, data: bytes):
     """Function used for FuncX deployment of inference
 
     Inputs:
+        segmenter (BaseSegmenter): Description of a segmentation tool
         data: TIF image data as a bytestring. Should be an 8-bit grayscale image
     Returns:
         - Bytes from a TIFF-encoded image of the mask
         - A dictionary of image analysis results
     """
     # Imports must be local to the function
-    from rtdefects.function import perform_segmentation, analyze_defects
+    from rtdefects.analysis import analyze_defects
     from rtdefects.io import encode_as_tiff
-    from skimage import color
     from io import BytesIO
     from time import perf_counter
-    import numpy as np
     import imageio
 
     # Measure when we start
     start_time = perf_counter()
 
-    # Load the file via disk
+    # Load the TIFF file into a numpy array
     image_gray = imageio.imread(BytesIO(data))
-    image = color.gray2rgb(image_gray)
 
     # Preprocess the image data
-    image = np.array(image, dtype=np.float32) / 255
-    image = np.expand_dims(image, axis=0)
+    image = segmenter.transform_standard_image(image_gray)
 
     # Perform the segmentation
-    segment = perform_segmentation(image)
+    segment = segmenter.perform_segmentation(image)
 
     # Make it into a bool array
     mask = segment[0, :, :, 0] > 0.9
@@ -116,11 +115,13 @@ class ImageProcessEventHandler(FileSystemEventHandler, metaclass=ABCMeta):
         `iterate_results` which iterates over completed inference records, removing objects from queue when completed
     """
 
-    def __init__(self, file_regex: Optional[str] = None):
+    def __init__(self, segmenter: BaseSegmenter, file_regex: Optional[str] = None):
         """
         Args:
+            segmenter: Description of the segmentation tool
              file_regex: Regex string to match file formats
         """
+        self.segmenter = segmenter
         self._queue = Queue()
         self.index = 0
         self.file_regex = re.compile(file_regex) if file_regex is not None else None
@@ -176,17 +177,18 @@ class ImageProcessEventHandler(FileSystemEventHandler, metaclass=ABCMeta):
 
 
 class FuncXSubmitEventHandler(ImageProcessEventHandler):
-    """Submit a image processing task to FuncX when an image file is created"""
+    """Submit an image processing task to FuncX when an image file is created"""
 
-    def __init__(self, client: FuncXClient, func_id: str, endp_id: str, file_regex: Optional[str] = None):
+    def __init__(self, segmenter: BaseSegmenter, client: FuncXClient, func_id: str, endp_id: str, file_regex: Optional[str] = None):
         """
         Args:
-             client: FuncX client
-             func_id: ID of the image processing function
-             endp_id: Endpoint ID for execution
-             file_regex: Regex string to match file formats
+            segmenter: Description of segmentation tool
+            client: FuncX client
+            func_id: ID of the image processing function
+            endp_id: Endpoint ID for execution
+            file_regex: Regex string to match file formats
         """
-        super().__init__(file_regex)
+        super().__init__(segmenter, file_regex)
         self.client = client
         self.func_id = func_id
         self.endp_id = endp_id
@@ -205,7 +207,7 @@ class FuncXSubmitEventHandler(ImageProcessEventHandler):
         logger.info(f'Read a {len(image_data) / 1024 ** 2:.1f} MB image from {file_path}')
 
         # Submit it to FuncX for evaluation
-        task_id = self.client.run(image_data, function_id=self.func_id, endpoint_id=self.endp_id)
+        task_id = self.client.run(self.segmenter, image_data, function_id=self.func_id, endpoint_id=self.endp_id)
         logger.info(f'Submitted task to FuncX. Task ID: {task_id}')
 
         # Push the task ID and submit time to the queue for processing
@@ -296,13 +298,13 @@ def main(args: Optional[List[str]] = None):
 
     # Prepare the event handler
     if args.local:
-        handler = LocalProcessingHandler(file_regex=args.regex)
+        handler = LocalProcessingHandler(segmenter=TFSegmenter(), file_regex=args.regex)
     else:
         client = FuncXClient()
         client.max_request_size = 50 * 1024 ** 2
         with open(_config_path, 'r') as fp:
             config = json.load(fp)
-        handler = FuncXSubmitEventHandler(client, config['function_id'], config['endpoint_id'], file_regex=args.regex)
+        handler = FuncXSubmitEventHandler(TFSegmenter(), client, config['function_id'], config['endpoint_id'], file_regex=args.regex)
 
     # Prepare the watch directory
     watch_dir = Path(args.watch_dir)
