@@ -18,6 +18,7 @@ from watchdog.events import FileSystemEventHandler, FileCreatedEvent, DirCreated
 from rtdefects.flask import app
 from rtdefects.io import read_then_encode
 from rtdefects.segmentation import BaseSegmenter
+from rtdefects.segmentation.pytorch import PyTorchSegmenter
 from rtdefects.segmentation.tf import TFSegmenter
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ def _funcx_func(segmenter, data: bytes):
     from rtdefects.io import encode_as_tiff
     from io import BytesIO
     from time import perf_counter
+    import numpy as np
     import imageio
 
     # Measure when we start
@@ -54,7 +56,8 @@ def _funcx_func(segmenter, data: bytes):
     segment = segmenter.perform_segmentation(image)
 
     # Make it into a bool array
-    mask = segment[0, :, :, 0] > 0.9
+    segment = np.squeeze(segment)
+    mask = segment > 0.9
 
     # Generate the analysis results
     defect_results = analyze_defects(mask)
@@ -253,7 +256,7 @@ class LocalProcessingHandler(ImageProcessEventHandler):
             logger.info(f'Read a {len(image_data) / 1024 ** 2:.1f} MB image from {img_path}')
 
             # Run the function
-            mask, defect_info = _funcx_func(image_data)
+            mask, defect_info = _funcx_func(self.segmenter, image_data)
             rtt = perf_counter() - detect_time
 
             yield img_path, mask, defect_info, rtt
@@ -273,6 +276,7 @@ def main(args: Optional[List[str]] = None):
 
     # Add in the launch setting
     start_parser = subparsers.add_parser('start', help='Launch the processing service')
+    start_parser.add_argument('--model', choices=['tf', 'pytorch'], default='pytorch', help='Which segmentation model to use')
     start_parser.add_argument('--regex', default=r'.*.tiff?$', help='Regex to match files')
     start_parser.add_argument('--redo-existing', action='store_true', help='Submit any existing files in the directory')
     start_parser.add_argument('--local', action='store_true', help='Perform image analysis locally,'
@@ -296,15 +300,23 @@ def main(args: Optional[List[str]] = None):
 
     assert args.command == 'start', f'Internal Error: The command "{args.command}" is not yet supported. Contact Logan'
 
+    # Select the correct segmenter
+    if args.model == 'tf':
+        segmenter = TFSegmenter()
+    elif args.model == 'pytorch':
+        segmenter = PyTorchSegmenter()
+    else:
+        raise ValueError(f'Model type "{args.model}" is not supported yet')
+
     # Prepare the event handler
     if args.local:
-        handler = LocalProcessingHandler(segmenter=TFSegmenter(), file_regex=args.regex)
+        handler = LocalProcessingHandler(segmenter=segmenter, file_regex=args.regex)
     else:
         client = FuncXClient()
         client.max_request_size = 50 * 1024 ** 2
         with open(_config_path, 'r') as fp:
             config = json.load(fp)
-        handler = FuncXSubmitEventHandler(TFSegmenter(), client, config['function_id'], config['endpoint_id'], file_regex=args.regex)
+        handler = FuncXSubmitEventHandler(segmenter, client, config['function_id'], config['endpoint_id'], file_regex=args.regex)
 
     # Prepare the watch directory
     watch_dir = Path(args.watch_dir)

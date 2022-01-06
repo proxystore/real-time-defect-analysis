@@ -6,6 +6,7 @@ import numpy as np
 import imageio
 
 from rtdefects.analysis import analyze_defects
+from rtdefects.segmentation.pytorch import PyTorchSegmenter
 from rtdefects.segmentation.tf import TFSegmenter
 
 
@@ -22,13 +23,15 @@ def mask() -> np.ndarray:
 
 @mark.parametrize(
     'segmenter',
-    [TFSegmenter()]
+    [TFSegmenter(), PyTorchSegmenter()]
 )
 def test_run(image, segmenter):
     image = segmenter.transform_standard_image(image)
+    assert isinstance(image, np.ndarray)
     output = segmenter.perform_segmentation(image)
-    assert output.shape == (1, 1024, 1024, 1)
-    imageio.imwrite('test-image-mask.tif', output[0])
+    output = np.squeeze(output)
+    assert output.shape == (1024, 1024)
+    imageio.imwrite('test-image-mask.tif', output)
 
 
 def test_analyze(mask):

@@ -8,6 +8,7 @@ dependencies:
   - watchdog>=2
   - numpy==1.19.*
   - pandas==1.*
+  - albumentations==1.0.*
   - scikit-image
   - imageio-ffmpeg
   - hyperspy-base
@@ -21,4 +22,7 @@ dependencies:
      - funcx
      - ratelimit
      - funcx-endpoint
+     - segmentation_models.pytorch
+     - torch==1.8.1+cu111  # Using PyPI so we get my locally-installed CUDA
+     - -f https://download.pytorch.org/whl/torch_stable.html
      - -e .
