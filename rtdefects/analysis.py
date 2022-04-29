@@ -1,8 +1,10 @@
 """Functions to analyze segmented images"""
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict
+from pathlib import Path
+from typing import List, Optional, Dict, Tuple
 
+import pandas as pd
 from skimage import measure, morphology
 import numpy as np
 
@@ -34,7 +36,7 @@ def analyze_defects(mask: np.ndarray, min_size: int = 50) -> dict:
     radii = [p['equivalent_diameter'] for p in props]
     output['radii'] = radii
     output['radii_average'] = np.average(radii)
-    output['positions'] = [p['coords'] for p in props]
+    output['positions'] = [p['centroid'] for p in props]
     return output
 
 
@@ -46,7 +48,8 @@ def track_voids(void_centers: List[np.ndarray], threshold: float, lookbehind: in
         threshold: Allowed distance between particles
         lookbehind: How many frames to look back for a match
     Returns:
-        The index of each unique void in each of the frames
+        The index of each unique void in each of the frames.
+        Values -1 corresponds to the void being absent in a particular frames.
     """
 
     # Start a list of the tracks with the IDs of the points from the first frame
@@ -92,16 +95,49 @@ def track_voids(void_centers: List[np.ndarray], threshold: float, lookbehind: in
         unmatched = set(range(len(cur_centers))).difference(cur_frame_id)
         for u in unmatched:
             global_id = len(tracks)
-            track = [None] * (cur_frame + 1) + [global_id]
+            track = [-1] * (cur_frame + 1) + [global_id]
             tracks.append(track)
             new_map[u] = global_id
 
         # Mark that tracks from the previous frame(s) are not found
         unmatched = set(range(len(tracks))).difference(new_map.values())
         for u in unmatched:
-            tracks[u].append(None)
+            tracks[u].append(-1)
 
         # Now that we're done, update the tracking map and move on
         last_map = new_map
 
-    return np.array(tracks)
+    return np.array(tracks, dtype=np.int)
+
+
+def compute_drift(tracks: np.ndarray, positions: List[np.ndarray]) -> np.ndarray:
+    """Estimate the drift for each frame from the positions of voids that were mapped between multiple frames
+
+    We determine the "drift" based on the median displacement of all voids, which is based
+    on the assumption that there is no net motion of all the voids.
+
+    Args:
+        tracks: Index of specific voids across multiple image frames
+        positions: Positions of each void in each frame
+    Returns:
+        Drift correction for each frame
+    """
+
+    # We'll assume that the first frame has a void
+    drifts = [(0, 0)]
+
+    # We're going to go frame-by-frame and guess the drift from the previous frame
+    for fid in range(1, len(tracks)):
+        # Get the voids in both images
+        in_both, = np.where((tracks[:, fid - 1:fid + 1] >= 0).all(axis=1))
+
+        # Get the median displacements displacements
+        last_id = tracks[in_both, fid - 1]
+        cur_id = tracks[in_both, fid]
+        median_disp = np.median(positions[fid][cur_id, :] - positions[fid - 1][last_id, :], axis=0)
+
+        # Add the drift to that of the previous image
+        drift = np.add(drifts[-1], median_disp)
+        drifts.append(drift)
+
+    return np.array(drifts)
