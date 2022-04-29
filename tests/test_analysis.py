@@ -17,8 +17,8 @@ def example_tracks():
     return [
         np.array([[0, 0], [1, 1], [2, 2]]),  # All except the appearing particle,
         np.array([[1.1, 1], [0, 0], [2, 2], [3, 3]]),  # All, with two switching positions
-        np.array([[0, 0], [1.2, 1], [3, 3]]),  # All except the disappearing one
-        np.array([[0, 0], [1.2, 1], [3, 3]]),  # All except the disappearing one
+        np.array([[0, 0], [1.2, 1], [3, 3], [4, 4]]),  # All except the disappearing one
+        np.array([[0, 0], [1.3, 1], [3, 3], [4, 4]]),  # All except the disappearing one
     ]
 
 
@@ -29,7 +29,8 @@ def test_tracking(example_tracks):
         [0, 1, 0, 0],
         [1, 0, 1, 1],
         [2, 2, -1, -1],
-        [-1, 3, 2, 2]
+        [-1, 3, 2, 2],
+        [-1, -1, 3, 3]
     ]).all()
 
     # Compute the drifts
