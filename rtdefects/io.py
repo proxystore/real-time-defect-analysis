@@ -64,7 +64,7 @@ def encode_as_tiff(data: np.ndarray, compress_level: int = 9) -> bytes:
     # Convert mask to a TIFF-encoded image
     output_img = BytesIO()
     writer = imageio.get_writer(output_img, format='tiff', mode='i')
-    writer.append_data(data, meta={'compress': compress_level})
+    writer.append_data(data, meta={'compression': compress_level})
     return output_img.getvalue()
 
 
