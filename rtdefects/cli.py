@@ -71,8 +71,7 @@ def _funcx_func(segmenter, data: bytes):
 
 
 def _set_config(function_id: Optional[str] = None, endpoint_id: Optional[str] = None):
-    """Set the system configuration given the parser
-    """
+    """Set the system configuration given the parser"""
 
     # Read in the current configuration
     if _config_path.is_file():
@@ -122,7 +121,7 @@ class ImageProcessEventHandler(FileSystemEventHandler, metaclass=ABCMeta):
         """
         Args:
             segmenter: Description of the segmentation tool
-             file_regex: Regex string to match file formats
+            file_regex: Regex string to match file formats
         """
         self.segmenter = segmenter
         self._queue = Queue()
@@ -135,16 +134,17 @@ class ImageProcessEventHandler(FileSystemEventHandler, metaclass=ABCMeta):
         return self._queue
 
     @abstractmethod
-    def submit_file(self, file_path):
+    def submit_file(self, file_path: Path, detect_time: datetime):
         """Submit a file to be analyzed
 
         Args:
             file_path: Path to the file to be analyzed
+            detect_time: Time at which a file was detected
         """
         pass
 
     @abstractmethod
-    def iterate_results(self) -> Iterator[Tuple[Path, bytes, dict, float]]:
+    def iterate_results(self) -> Iterator[Tuple[Path, bytes, dict, float, datetime]]:
         """Iterate over results from process images
 
         Yields:
@@ -152,6 +152,7 @@ class ImageProcessEventHandler(FileSystemEventHandler, metaclass=ABCMeta):
             - Segmented image as a byte string
             - Information about the detected defects
             - Time between file detection and result received, seconds
+            - Time the image was first detected
         """
 
     def on_created(self, event: Union[FileCreatedEvent, DirCreatedEvent]):
@@ -161,8 +162,8 @@ class ImageProcessEventHandler(FileSystemEventHandler, metaclass=ABCMeta):
             return
 
         # Send the file to be analyzed
+        detect_time = datetime.now()
         file_path = Path(event.src_path)
-        self.submit_file(file_path)
 
         # Match the filename
         if self.file_regex is not None:
@@ -174,7 +175,7 @@ class ImageProcessEventHandler(FileSystemEventHandler, metaclass=ABCMeta):
 
         # Attempt to run it
         try:
-            self.submit_file(file_path)
+            self.submit_file(file_path, detect_time)
         except BaseException as e:
             logger.warning(f'Submission for {event.src_path} failed. Error: {e}')
 
@@ -182,7 +183,8 @@ class ImageProcessEventHandler(FileSystemEventHandler, metaclass=ABCMeta):
 class FuncXSubmitEventHandler(ImageProcessEventHandler):
     """Submit an image processing task to FuncX when an image file is created"""
 
-    def __init__(self, segmenter: BaseSegmenter, client: FuncXClient, func_id: str, endp_id: str, file_regex: Optional[str] = None):
+    def __init__(self, segmenter: BaseSegmenter, client: FuncXClient, func_id: str, endp_id: str,
+                 file_regex: Optional[str] = None):
         """
         Args:
             segmenter: Description of segmentation tool
@@ -196,15 +198,7 @@ class FuncXSubmitEventHandler(ImageProcessEventHandler):
         self.func_id = func_id
         self.endp_id = endp_id
 
-    def submit_file(self, file_path: Path):
-        """Submit a file to be analyzed
-
-        Args:
-            file_path: Path to the file to be analyzed
-        """
-        # Performance information
-        detect_time = perf_counter()
-
+    def submit_file(self, file_path: Path, detect_time: datetime):
         # Load the image from disk
         image_data = read_then_encode(file_path)
         logger.info(f'Read a {len(image_data) / 1024 ** 2:.1f} MB image from {file_path}')
@@ -217,7 +211,7 @@ class FuncXSubmitEventHandler(ImageProcessEventHandler):
         self.index += 1
         self.queue.put((task_id, detect_time, Path(file_path)))
 
-    def iterate_results(self) -> Iterator[Tuple[Path, bytes, dict, float]]:
+    def iterate_results(self) -> Iterator[Tuple[Path, bytes, dict, float, datetime]]:
         # Set up a throttling for the FuncX request
         @sleep_and_retry
         @rate_limited(self.client.max_requests - 10, period=self.client.period * 0.9)
@@ -234,22 +228,20 @@ class FuncXSubmitEventHandler(ImageProcessEventHandler):
             if mask is None:
                 logger.warning(f'Task failure: {task["exception"]}')
                 break
-            rtt = perf_counter() - detect_time
+            rtt = (datetime.now() - detect_time).total_seconds()
 
-            yield img_path, mask, defect_info, rtt
+            yield img_path, mask, defect_info, rtt, detect_time
 
 
 class LocalProcessingHandler(ImageProcessEventHandler):
     """Image handler that performs image analysis locally"""
 
-    def submit_file(self, file_path):
-        detect_time = perf_counter()
-
+    def submit_file(self, file_path, detect_time):
         # Push the task ID and submit time to the queue for processing
         self.index += 1
         self.queue.put((detect_time, Path(file_path)))
 
-    def iterate_results(self) -> Iterator[Tuple[Path, bytes, dict, float]]:
+    def iterate_results(self) -> Iterator[Tuple[Path, bytes, dict, float, datetime]]:
         for detect_time, img_path in iter(self.queue.get, None):
             # Load the image from disk
             image_data = read_then_encode(img_path)
@@ -257,9 +249,9 @@ class LocalProcessingHandler(ImageProcessEventHandler):
 
             # Run the function
             mask, defect_info = _funcx_func(self.segmenter, image_data)
-            rtt = perf_counter() - detect_time
+            rtt = (datetime.now() - detect_time).total_seconds()
 
-            yield img_path, mask, defect_info, rtt
+            yield img_path, mask, defect_info, rtt, detect_time
 
 
 def main(args: Optional[List[str]] = None):
@@ -276,7 +268,8 @@ def main(args: Optional[List[str]] = None):
 
     # Add in the launch setting
     start_parser = subparsers.add_parser('start', help='Launch the processing service')
-    start_parser.add_argument('--model', choices=['tf', 'pytorch'], default='pytorch', help='Which segmentation model to use')
+    start_parser.add_argument('--model', choices=['tf', 'pytorch'], default='pytorch',
+                              help='Which segmentation model to use')
     start_parser.add_argument('--regex', default=r'.*.tiff?$', help='Regex to match files')
     start_parser.add_argument('--redo-existing', action='store_true', help='Submit any existing files in the directory')
     start_parser.add_argument('--local', action='store_true', help='Perform image analysis locally,'
@@ -316,7 +309,8 @@ def main(args: Optional[List[str]] = None):
         client.max_request_size = 50 * 1024 ** 2
         with open(_config_path, 'r') as fp:
             config = json.load(fp)
-        handler = FuncXSubmitEventHandler(segmenter, client, config['function_id'], config['endpoint_id'], file_regex=args.regex)
+        handler = FuncXSubmitEventHandler(segmenter, client, config['function_id'],
+                                          config['endpoint_id'], file_regex=args.regex)
 
     # Prepare the watch directory
     watch_dir = Path(args.watch_dir)
@@ -340,11 +334,11 @@ def main(args: Optional[List[str]] = None):
         data_path.unlink(missing_ok=True)  # Delete any existing data
         for file in watch_dir.iterdir():
             if file.is_file():
-                handler.submit_file(file)
+                handler.submit_file(file, datetime.now())
 
     # Wait for results to complete
     try:
-        for index, (img_path, mask, defect_info, rtt) in enumerate(handler.iterate_results()):
+        for index, (img_path, mask, defect_info, rtt, detect_time) in enumerate(handler.iterate_results()):
             # Report the completed result
             logger.info(f'Result received for {index + 1}/{handler.index}. RTT: {rtt:.2f}s.'
                         f' Backlog: {handler.queue.qsize()}')
@@ -361,6 +355,7 @@ def main(args: Optional[List[str]] = None):
             defect_info['mask-path'] = str(out_name)
             defect_info['image-path'] = str(img_path)
             defect_info['rtt'] = rtt
+            defect_info['detect_time'] = detect_time.isoformat()
             with data_path.open('a') as fp:
                 print(json.dumps(defect_info), file=fp)
     except KeyboardInterrupt:
