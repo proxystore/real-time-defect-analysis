@@ -10,6 +10,7 @@ dependencies:
   - pandas==1.*
   - albumentations==1.0.*
   - scikit-image
+  - imageio==2.19.3
   - imageio-ffmpeg
   - hyperspy-base
   - bokeh
