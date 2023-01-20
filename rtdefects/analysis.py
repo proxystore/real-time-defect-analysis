@@ -78,14 +78,15 @@ def compute_drift(tracks: pd.DataFrame) -> np.ndarray:
     # We'll assume that the first frame has a void
     drifts = [(0, 0)]
 
-    # Get the particles that are in the first frame
-    last_frame = tracks.query('frame == 0')
-
     # We're going to go frame-by-frame and guess the drift from the previous frame
+    last_frame = tracks.query('frame==0')
     for fid in range(1, tracks['frame'].max() + 1):
         # Join the two frames
-        my_frame = tracks.query(f'frame == {fid}')
+        my_frame = tracks.query(f'frame=={fid}')
         aligned = last_frame.merge(my_frame, on='particle')
+
+        # The current frame will be the previous for the next iteration
+        last_frame = my_frame
 
         # If there are no voids in both frames, assign a drift change of 0
         if len(aligned) == 0:
@@ -100,9 +101,6 @@ def compute_drift(tracks: pd.DataFrame) -> np.ndarray:
         # Add the drift to that of the previous image
         drift = np.add(drifts[-1], median_disp)
         drifts.append(drift)
-
-        # The current frame is now the last
-        last_frame = my_frame
 
     return np.array(drifts)
 
