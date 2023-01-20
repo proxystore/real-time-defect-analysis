@@ -5,7 +5,7 @@ from argparse import ArgumentParser
 from typing import Optional, List, Union, Iterator, Tuple
 from pathlib import Path
 from queue import Queue
-from time import perf_counter, sleep
+from time import sleep
 import logging
 import json
 import re
