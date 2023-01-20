@@ -15,6 +15,7 @@ dependencies:
   - trackpy==0.5.*
   - hyperspy-base
   - bokeh
+  - flake8
   - flask
   - flask-cors
   - jupyterlab
