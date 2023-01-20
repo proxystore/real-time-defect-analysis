@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 # Storage for the model
 _model: Optional[torch.nn.Module] = None
 _model_path = Path(__file__).parent.joinpath('files', 'voids_segmentation_091321.pth')
+# TODO (wardlt): Get the newer version of the model from Zhi-Gang
 
 
 class PyTorchSegmenter(BaseSegmenter):

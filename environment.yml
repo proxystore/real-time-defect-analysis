@@ -12,8 +12,10 @@ dependencies:
   - scikit-image
   - imageio==2.19.3
   - imageio-ffmpeg
+  - trackpy==0.5.*
   - hyperspy-base
   - bokeh
+  - flake8
   - flask
   - flask-cors
   - jupyterlab
