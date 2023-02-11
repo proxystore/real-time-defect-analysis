@@ -1,6 +1,6 @@
 from abc import ABCMeta, abstractmethod
 from datetime import datetime
-from threading import Thread
+from threading import Thread, Timer
 from argparse import ArgumentParser
 from typing import Optional, List, Union, Iterator, Tuple
 from pathlib import Path
@@ -179,6 +179,10 @@ class ImageProcessEventHandler(FileSystemEventHandler, metaclass=ABCMeta):
         except BaseException as e:
             logger.warning(f'Submission for {event.src_path} failed. Error: {e}')
 
+    def close(self):
+        """Stop processing new files."""
+        self._queue.put(None)
+
 
 class FuncXSubmitEventHandler(ImageProcessEventHandler):
     """Submit an image processing task to FuncX when an image file is created"""
@@ -274,6 +278,8 @@ def main(args: Optional[List[str]] = None):
     start_parser.add_argument('--redo-existing', action='store_true', help='Submit any existing files in the directory')
     start_parser.add_argument('--local', action='store_true', help='Perform image analysis locally,'
                                                                    ' instead of via FuncX')
+    start_parser.add_argument('--no-server', action='store_true', help='Skip launching a monitoring server')
+    start_parser.add_argument('--timeout', default=None, type=float, help='Stop watching for new files after this time (units: s)')
     start_parser.add_argument('watch_dir', help='Which directory to watch for new files')
 
     # Add in the register setting
@@ -294,6 +300,7 @@ def main(args: Optional[List[str]] = None):
     assert args.command == 'start', f'Internal Error: The command "{args.command}" is not yet supported. Contact Logan'
 
     # Select the correct segmenter
+    logger.info('Loading in the segmentation tool')
     if args.model == 'tf':
         segmenter = TFSegmenter()
     elif args.model == 'pytorch':
@@ -304,6 +311,7 @@ def main(args: Optional[List[str]] = None):
     # Prepare the event handler
     if args.local:
         handler = LocalProcessingHandler(segmenter=segmenter, file_regex=args.regex)
+        logger.info('Prepared to handle processing locally')
     else:
         client = FuncXClient()
         client.max_request_size = 50 * 1024 ** 2
@@ -311,6 +319,7 @@ def main(args: Optional[List[str]] = None):
             config = json.load(fp)
         handler = FuncXSubmitEventHandler(segmenter, client, config['function_id'],
                                           config['endpoint_id'], file_regex=args.regex)
+        logger.info(f'Will run processing on {config["endpoint_id"]}')
 
     # Prepare the watch directory
     watch_dir = Path(args.watch_dir)
@@ -318,23 +327,36 @@ def main(args: Optional[List[str]] = None):
     mask_dir.mkdir(exist_ok=True)
 
     # Launch the flask app
-    app.config['exec_queue'] = handler.queue
-    app.config['watch_dir'] = Path(args.watch_dir)
-    flask_thr = Thread(target=app.run, daemon=True, name='rtdefects.flask')
-    flask_thr.start()
+    if not args.no_server:
+        app.config['exec_queue'] = handler.queue
+        app.config['watch_dir'] = Path(args.watch_dir)
+        flask_thr = Thread(target=app.run, daemon=True, name='rtdefects.flask')
+        flask_thr.start()
 
     # Launch the watcher
     obs = Observer()
     obs.schedule(handler, path=args.watch_dir, recursive=False)
     obs.start()
+    logger.info(f'Watching for new files in {args.watch_dir}')
+
+    # Prepare to stop watching for files
+    if args.timeout is not None:
+        def _shutoff():
+            logger.info('Stopping file watcher.')
+            handler.close()
+        Timer(args.timeout, _shutoff)
+        logger.info(f'Set timeout for {args.timeout:.1f}s')
 
     # If desired, submit the existing files
     data_path = mask_dir.joinpath('defect-details.json')
     if args.redo_existing:
+        logger.info('Redoing analysis for any file already in that folder')
         data_path.unlink(missing_ok=True)  # Delete any existing data
         for file in watch_dir.iterdir():
             if file.is_file():
                 handler.submit_file(file, datetime.now())
+
+    handler.queue.put(None)
 
     # Wait for results to complete
     try:

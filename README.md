@@ -16,7 +16,34 @@ The environment can be installed via Anaconda: ``conda env create --file environ
 
 Change the tensorflow dependency in `environment.yml` to `tensorflow-gpu` if GPU support is desired.
 
-## Use
+See below for setting up a remote compute service for running the machine learning model.
+It is entirely possible to run everything locally, but external resources may provide faster image throughput.
+
+## Running Image Analysis
+
+Run the image segmentation and analysis code by calling the `rtdefects` command line application.
+
+The full version of the application will run new images as they appear in a certain folder,
+delegate processing to a remote system,
+and deploy a web server that displays a status page. Launch it by calling: 
+
+`rtdefects ./path/to/watch`
+
+`rtdefects` will write the segmentation files and a JSON file containing the defect statstics
+to a directory named "masks" within the watched directory.
+
+If you want to run segmentation on a directory of files, you can turn off many of these features:
+
+`rtdefects start --local  --timeout 0 --redo-existing --no-server ./path/to/server`
+
+- `--local` turns off remote computing
+- `--timeout 0` stops watching for new files after 0 seconds have passed.
+- `--redo-existing` runs analysis of all images, even if they have been processed before
+- `--no-server` turns off the status server
+
+Call `rtdefects start -h` for a complete list of options
+
+## Setting up Remote Computing
 
 Our system requires configuring both an endpoint to run the image analysis and one where the images are generated. 
 
@@ -56,11 +83,6 @@ to be processed via FuncX, and then collect the completed results.
 It will run until you exit by pressing <kbd>Ctrl</kbd>+<kbd>C</kbd>,
 which will require up to 15s to register on a Windows system.
 
-### Running without FuncX
-
-The Image Analyzer can be run without FuncX by adding the `--local` option when calling `rtdefects start`.
-It will execute the segmentation and post-processing on your local system, 
-which means you can skip setting up a compute provider.
 
 ## Support
 
