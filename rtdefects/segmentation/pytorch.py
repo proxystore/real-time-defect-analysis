@@ -16,19 +16,36 @@ logger = logging.getLogger(__name__)
 
 # Storage for the model
 _model: Optional[torch.nn.Module] = None
-_model_path = Path(__file__).parent.joinpath('files', 'voids_segmentation_091321.pth')
-# TODO (wardlt): Get the newer version of the model from Zhi-Gang
+_model_dir = Path(__file__).parent.joinpath('files')
+
+# Lookup tables for the pre-processor used by different versions of the model
+_encoders = {
+    'voids_segmentation_091321.pth': 'se_resnext50_32x4d',
+    'voids_segmentation_030323.pth': 'efficientnet-b3',
+}
 
 
 class PyTorchSegmenter(BaseSegmenter):
-    """Implementing using Zhi-Ghang's Sept21 PyTorch Model"""
+    """Interfaces for models based on segmentation_models.pytorch"""
 
-    def __init__(self, encoder: str = 'se_resnext50_32x4d'):
+    def __init__(
+            self,
+            model_name: str = 'voids_segmentation_030323.pth'
+    ):
+        """
+
+        Args:
+            model_name: Name of the model we should use
+        """
+        self.model_path = _model_dir / model_name
+
         # Get the preprocessor and build the preprocessing pipeline
-        preprocessing_fn = smp.encoders.get_preprocessing_fn(encoder)
+        assert model_name in _encoders, f'No encoder defined for {model_name}. Consult developer'
+        preprocessing_fn = smp.encoders.get_preprocessing_fn(_encoders[model_name])
 
         def to_tensor(x, **kwargs):
             return x.transpose(2, 0, 1).astype('float32')
+
         _transform = [
             albu.Lambda(image=preprocessing_fn),
             albu.Lambda(image=to_tensor),
@@ -48,18 +65,18 @@ class PyTorchSegmenter(BaseSegmenter):
         global _model
         if _model is None:
             # Make sure the model exists
-            if not _model_path.is_file():
-                raise ValueError(f'Cannot find the model. No such file: {_model_path}')
+            if not self.model_path.is_file():
+                raise ValueError(f'Cannot find the model. No such file: {self.model_path}')
 
             # Get the model hash to help with reproducibility
-            with open(_model_path, 'rb') as fp:
+            with open(self.model_path, 'rb') as fp:
                 hsh = md5()
                 while len(line := fp.read(4096 * 1024)) > 0:
                     hsh.update(line)
-            logger.info(f'Loading the model from {_model_path}. MD5 Hash: {hsh.hexdigest()}')
+            logger.info(f'Loading the model from {self.model_path}. MD5 Hash: {hsh.hexdigest()}')
 
             # Load it with Keras
-            _model = torch.load(str(_model_path), map_location=device)
+            _model = torch.load(str(self.model_path), map_location=device)
             logger.info('Model loaded.')
         return _model
 
