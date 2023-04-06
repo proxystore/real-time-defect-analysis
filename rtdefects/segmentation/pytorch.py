@@ -24,6 +24,7 @@ _model_dir = Path(__file__).parent.joinpath('files')
 _encoders = {
     'voids_segmentation_091321.pth': 'se_resnext50_32x4d',
     'voids_segmentation_030323.pth': 'efficientnet-b3',
+    'small_voids_031023.pth': 'se_resnext50_32x4d',
 }
 
 

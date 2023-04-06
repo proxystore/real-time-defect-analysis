@@ -35,7 +35,8 @@ def test_download(tmpdir):
 
 @mark.parametrize(
     'segmenter',
-    [TFSegmenter(), PyTorchSegmenter('voids_segmentation_091321.pth'), PyTorchSegmenter('voids_segmentation_030323.pth')]
+    [TFSegmenter(), PyTorchSegmenter('voids_segmentation_091321.pth'), PyTorchSegmenter('voids_segmentation_030323.pth'),
+     PyTorchSegmenter('small_voids_031023.pth')]
 )
 def test_run(image, segmenter):
     image = segmenter.transform_standard_image(image)
