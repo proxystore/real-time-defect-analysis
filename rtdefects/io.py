@@ -45,12 +45,12 @@ def load_file(path: Path) -> np.ndarray:
     return data
 
 
-def encode_as_tiff(data: np.ndarray, compress_level: int = 9) -> bytes:
+def encode_as_tiff(data: np.ndarray, compress_type: int = 5) -> bytes:
     """Encode an image as an 8-bit grayscale TIFF, our desired file format
 
     Args:
         data: Data to be encoded, should be a float array with range 0-1
-        compress_level: Lossless compression level, between 0 (no compression) and 9 (maximum)
+        compress_type: Compression algorithm from tifffile
     Returns:
         TIFF image as a byte array
     """
@@ -64,11 +64,11 @@ def encode_as_tiff(data: np.ndarray, compress_level: int = 9) -> bytes:
     # Convert mask to a TIFF-encoded image
     output_img = BytesIO()
     writer = imageio.get_writer(output_img, format='tiff', mode='i')
-    writer.append_data(data, meta={'compression': compress_level})
+    writer.append_data(data, meta={'compression': compress_type})
     return output_img.getvalue()
 
 
-def read_then_encode(path: Path, compress_level: int = 9) -> bytes:
+def read_then_encode(path: Path, compress_level: int = 5) -> bytes:
     """Read an image from disk and return it encoded in the standard TIFF format (8-bit integer)
 
     Args:

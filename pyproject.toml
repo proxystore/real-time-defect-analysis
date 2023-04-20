@@ -28,6 +28,7 @@ dependencies = [
     "segmentation_models.pytorch==0.2.*",
     "torch<2",
     "albumentations==1.*",
+    "imagecodecs",
 
     # Related to post-processing
     "pandas==1.*",
