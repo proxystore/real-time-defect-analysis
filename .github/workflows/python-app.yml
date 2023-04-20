@@ -20,14 +20,13 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Set up environment
-      uses: conda-incubator/setup-miniconda@v2
-      with:
-        miniconda-version: "latest"
-        environment-file: environment.yml
-        python-version: "3.9.*"
+      run: |
+        pip install --upgrade pip setuptools
+        pip install "torch<2" --index-url https://download.pytorch.org/whl/cpu
+        pip install -e .[test]
     - name: Lint with flake8
       run: |
-        flake8 fff
+        flake8 rtdefects
     - name: Test with pytest
       run: |
         pytest --cov=rtdefects tests

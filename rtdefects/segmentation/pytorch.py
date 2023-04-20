@@ -8,6 +8,7 @@ import segmentation_models_pytorch as smp
 
 import albumentations as albu
 from skimage import color
+from skimage.transform import resize
 import numpy as np
 import requests
 import torch
@@ -47,7 +48,7 @@ class PyTorchSegmenter(BaseSegmenter):
 
     def __init__(
             self,
-            model_name: str = 'small_voids_031023.pth'
+            model_name: str = 'small_voids_031023.pth',
     ):
         """
         Args:
@@ -77,7 +78,11 @@ class PyTorchSegmenter(BaseSegmenter):
 
     def transform_standard_image(self, image_data: np.ndarray) -> np.ndarray:
         # Convert to RGB
-        image = color.gray2rgb(image_data)
+        image: np.ndarray = color.gray2rgb(image_data)
+
+        # Scale to 1024x1024
+        if image.shape[:2] != (1024, 1024):
+            image = resize(image, output_shape=(1024, 1024), anti_aliasing=True)
 
         # Perform the preprocessing
         image = self.preprocess(image=image)

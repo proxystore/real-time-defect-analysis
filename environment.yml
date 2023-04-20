@@ -3,16 +3,16 @@ channels:
   - defaults
   - conda-forge
 dependencies:
-  - python>=3.8
+  - python==3.10.*
   - tensorflow>2
   - watchdog>=2
-  - numpy==1.19.*
   - pandas==1.*
   - albumentations==1.0.*
   - scikit-image
   - imageio==2.19.3
   - imageio-ffmpeg
   - trackpy==0.5.*
+  - pint<0.20
   - hyperspy-base
   - bokeh
   - flake8
@@ -26,6 +26,6 @@ dependencies:
      - ratelimit
      - funcx-endpoint
      - segmentation_models.pytorch==0.2.*
-     - torch==1.8.1+cu111  # Using PyPI so we get my locally-installed CUDA
+     - torch==1.13.1+cu116  # Using PyPI so we get my locally-installed CUDA
      - -f https://download.pytorch.org/whl/torch_stable.html
      - -e .
