@@ -1,0 +1,6 @@
+data-dir
+env/
+proxystore/
+*.egg-info/
+__pycache__/
+small_voids_031023.pth

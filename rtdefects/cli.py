@@ -2,18 +2,24 @@ from abc import ABCMeta, abstractmethod
 from datetime import datetime
 from threading import Thread, Timer
 from argparse import ArgumentParser
-from typing import Optional, List, Union, Iterator, Tuple
+from typing import Any, Optional, List, Union, Iterator, Tuple
 from pathlib import Path
 from queue import Queue
 from time import sleep
 import logging
 import json
 import re
+import sys
 
 from funcx import FuncXClient
 from ratelimit import sleep_and_retry, rate_limited
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, DirCreatedEvent
+
+from proxystore.connectors.endpoint import EndpointConnector
+from proxystore.connectors.file import FileConnector
+from proxystore.store import Store
+from proxystore.store import register_store
 
 from rtdefects.flask import app
 from rtdefects.io import read_then_encode
@@ -35,6 +41,13 @@ def _funcx_func(segmenter, data: bytes):
         - Bytes from a TIFF-encoded image of the mask
         - A dictionary of image analysis results
     """
+    from proxystore.proxy import Proxy
+    from proxystore.store import get_store
+    from proxystore.store.utils import resolve_async
+
+    if isinstance(data, Proxy):
+        resolve_async(data)
+
     # Imports must be local to the function
     from rtdefects.analysis import analyze_defects
     from rtdefects.io import encode_as_tiff
@@ -47,7 +60,7 @@ def _funcx_func(segmenter, data: bytes):
     start_time = perf_counter()
 
     # Load the TIFF file into a numpy array
-    image_gray = imageio.imread(BytesIO(data))
+    image_gray = imageio.imread(BytesIO(bytes(data)))
 
     # Preprocess the image data
     image = segmenter.transform_standard_image(image_gray)
@@ -67,7 +80,10 @@ def _funcx_func(segmenter, data: bytes):
 
     # Add the execution time to the defect results
     defect_results['run_time'] = perf_counter() - start_time
-    return message, defect_results
+    result = (message, defect_results)
+    if isinstance(data, Proxy):
+        result = get_store(data).proxy(result)
+    return result
 
 
 def _set_config(function_id: Optional[str] = None, endpoint_id: Optional[str] = None):
@@ -187,8 +203,15 @@ class ImageProcessEventHandler(FileSystemEventHandler, metaclass=ABCMeta):
 class FuncXSubmitEventHandler(ImageProcessEventHandler):
     """Submit an image processing task to FuncX when an image file is created"""
 
-    def __init__(self, segmenter: BaseSegmenter, client: FuncXClient, func_id: str, endp_id: str,
-                 file_regex: Optional[str] = None):
+    def __init__(
+        self,
+        segmenter: BaseSegmenter,
+        client: FuncXClient,
+        func_id: str,
+        endp_id: str,
+        file_regex: Optional[str] = None,
+        store: Optional[Store[Any]] = None,
+    ):
         """
         Args:
             segmenter: Description of segmentation tool
@@ -196,16 +219,21 @@ class FuncXSubmitEventHandler(ImageProcessEventHandler):
             func_id: ID of the image processing function
             endp_id: Endpoint ID for execution
             file_regex: Regex string to match file formats
+            store: Optional ProxyStore Store to use.
         """
         super().__init__(segmenter, file_regex)
         self.client = client
         self.func_id = func_id
         self.endp_id = endp_id
+        self.store = store
 
     def submit_file(self, file_path: Path, detect_time: datetime):
         # Load the image from disk
         image_data = read_then_encode(file_path)
         logger.info(f'Read a {len(image_data) / 1024 ** 2:.1f} MB image from {file_path}')
+
+        if self.store is not None:
+            image_data = self.store.proxy(image_data, evict=True)
 
         # Submit it to FuncX for evaluation
         task_id = self.client.run(self.segmenter, image_data, function_id=self.func_id, endpoint_id=self.endp_id)
@@ -281,6 +309,17 @@ def main(args: Optional[List[str]] = None):
     start_parser.add_argument('--no-server', action='store_true', help='Skip launching a monitoring server')
     start_parser.add_argument('--timeout', default=None, type=float, help='Stop watching for new files after this time (units: s)')
     start_parser.add_argument('watch_dir', help='Which directory to watch for new files')
+    start_parser.add_argument(
+        '--ps-endpoints',
+        default=None,
+        nargs='+',
+        help='List of ProxyStore endpoint UUIDs to use',
+    )
+    start_parser.add_argument(
+        '--ps-file-dir',
+        default=None,
+        help='ProxyStore file directory to use',
+    )
 
     # Add in the register setting
     subparsers.add_parser('register', help='(Re)-register the funcX function')
@@ -289,7 +328,12 @@ def main(args: Optional[List[str]] = None):
     args = parser.parse_args(args)
 
     # Make the logger
-    logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+    logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.INFO,
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=True,
+    )
 
     # Handle the configuration
     if args.command == 'config':
@@ -313,12 +357,31 @@ def main(args: Optional[List[str]] = None):
         handler = LocalProcessingHandler(segmenter=segmenter, file_regex=args.regex)
         logger.info('Prepared to handle processing locally')
     else:
+        store: Store[Any] | None = None
+        if args.ps_endpoints is not None:
+            connector = EndpointConnector(args.ps_endpoints)
+            store = Store('endpoints', connector=connector)
+            register_store(store)
+        elif args.ps_file_dir is not None:
+            connector = FileConnector(args.ps_file_dir)
+            store = Store('file', connector=connector)
+            register_store(store)
+
         client = FuncXClient()
+        client.max_requests = 10
+        client.period = 1
         client.max_request_size = 50 * 1024 ** 2
+
         with open(_config_path, 'r') as fp:
             config = json.load(fp)
-        handler = FuncXSubmitEventHandler(segmenter, client, config['function_id'],
-                                          config['endpoint_id'], file_regex=args.regex)
+        handler = FuncXSubmitEventHandler(
+            segmenter,
+            client,
+            config['function_id'],
+            config['endpoint_id'],
+            file_regex=args.regex,
+            store=store,
+        )
         logger.info(f'Will run processing on {config["endpoint_id"]}')
 
     # Prepare the watch directory
