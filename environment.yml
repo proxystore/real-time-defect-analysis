@@ -13,7 +13,7 @@ dependencies:
      - ratelimit
      - funcx-endpoint==1.0.13
      - tensorflow>2
-     - proxystore==0.5.0
+     - proxystore==0.5.1
      - segmentation_models.pytorch==0.2.*
      - torch==1.13.1+cu116  # Using PyPI so we get my locally-installed CUDA
      - -f https://download.pytorch.org/whl/torch_stable.html
