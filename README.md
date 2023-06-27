@@ -1,5 +1,7 @@
 # Real-Time Defect Identification
 
+[![DOI](https://zenodo.org/badge/624909177.svg)](https://zenodo.org/badge/latestdoi/624909177)
+
 This package is a service for real-time defect identification from TEM images. 
 
 The key component is a server that will watch a specific folder on a file system and 
